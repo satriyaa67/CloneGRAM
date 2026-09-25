@@ -19,11 +19,9 @@ Sade bir içerik yayın stüdyosu: yetkili olduğunuz Telegram kaynaklarından g
 
 ## Ekipteki üç geliştirici aracı
 
-- **Frontend Design:** Claude Code'da `/plugin marketplace add anthropics/claude-code`, ardından `/plugin install frontend-design@claude-code-plugins`.
-- **Superpowers:** Claude Code'da `/plugin install superpowers@claude-plugins-official`. Büyük özelliklerde keşif → onaylı tasarım → plan → test odaklı uygulama → inceleme akışını kullanın.
-- **Context7:** Proje kapsamlı `.mcp.json` üzerinden yapılandırılmıştır. İlk kullanımda Claude Code'un sunucu onayını verin; daha yüksek limitler için isteğe bağlı Context7 API anahtarınızı kendi ortamınızda ayarlayın, anahtarı depoya commit etmeyin.
+Claude Code proje ayarları `.claude/settings.json` içinde paylaşılır: Frontend Design ve Superpowers eklentileri etkinleştirilmiştir; ilk proje güveninde marketplace/eklenti kurulum onayı istenebilir. Context7 remote MCP `.mcp.json` ile tanımlanır; ayrıca `CLAUDE.md` kaynak belgeler için Context7 kullanımını ister.
 
-Projeye özel çalışma kuralları `CLAUDE.md` dosyasındadır.
+Daha yüksek Context7 limitleri için isteğe bağlı API anahtarını kendi yerel ortamınızda tanımlayın, anahtarı depoya commit etmeyin. Projeye özel çalışma kuralları `CLAUDE.md` dosyasındadır.
 
 ## Güvenli ürün sınırları
 
