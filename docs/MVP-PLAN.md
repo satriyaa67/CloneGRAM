@@ -22,10 +22,20 @@ Design: [spec](superpowers/specs/2026-09-26-phase-1-telegram-intake-design.md) �
 - [x] Record chats the bot is added to (`my_chat_member`) so the panel can register them in one click.
 - [x] Live panel: sign-in gate (admin token, session-only), overview with setup checklist, queue with filters, connections, settings with webhook health; demo mode kept for offline review.
 - [x] Single-Worker deploy workflow (`ops/github-workflows/deploy.yml`): tests, D1 find-or-create, migrations, deploy, secrets, webhook.
-- [ ] Move `ci.yml` and `deploy.yml` into `.github/workflows/` (needs a maintainer; automation lacks the GitHub workflow permission).
-- [ ] Add repository secrets and run the first deploy (needs Cloudflare account, bot token).
-- [ ] Live smoke test by the product owner: bot added to a source and a destination, a new source post appears in the queue.
+- [x] Move `ci.yml` and `deploy.yml` into `.github/workflows/` (done by the product owner).
+- [x] Add repository secrets and run the first deploy.
+- [x] Live smoke test by the product owner: bot added to a source and a destination, a new source post appears in the queue.
 - **Acceptance:** Only accessible, unprotected, rights-cleared new posts enter the queue; repeated webhook delivery cannot create duplicates. Covered by 46 automated tests plus a scripted panel walkthrough against the real app.
+
+## Phase 1.1 · Owner feedback after the live test (2026-09-26)
+
+Spec: [phase 1.1](superpowers/specs/2026-09-26-phase-1-1-publish-cancel-theme.md)
+
+- [x] Manual publish: "Hedefe gönder" copies a queued post (albums together, via `copyMessage`/`copyMessages`) to a registered destination; destination chooser when there are several. Claim-before-send prevents double posts; failures are shown in Turkish with "Tekrar dene".
+- [x] Cancel / restore queued posts (whole album at once).
+- [x] "Test mesajı gönder" on destinations (silent) to verify posting rights.
+- [x] Light / dark / system theme in Settings; transparent CloneGRAM watermark behind the panel in both themes.
+- **Why:** Phase 1 only collected posts, so nothing reached the destination. Automatic publishing stays in Phase 3.
 
 ## Phase 2 · Content review and transforms
 
@@ -60,6 +70,24 @@ Design: [spec](superpowers/specs/2026-09-26-phase-1-telegram-intake-design.md) �
 - [ ] Add a preview environment and a custom domain once purchased; keep runtime secrets out-of-band.
 - [ ] Run security, accessibility, mobile, integration, privacy, and recovery tests before inviting users.
 - **Acceptance:** Production build has no secrets in Git or client bundle; backups/retention and error alerting work; end-to-end test confirms permission and consent guards.
+
+## Phase 6 · Power features from the competitor review
+
+Research: [`docs/COMPETITOR-ANALYSIS.md`](COMPETITOR-ANALYSIS.md). Principle: nothing new in the main navigation. Every feature lives in one per-source **Kurallar** drawer with four collapsed groups (Filtre, Düzenle, Zamanlama, Yayın seçenekleri), all off by default, each with a one-line preview of its effect.
+
+- [ ] Filters: media type, keyword allow/block list, drop posts with links or given hashtags.
+- [ ] Text rules: find and replace (links, @handles), remove lines containing a keyword, strip links/mentions, header template (footer comes in Phase 2).
+- [ ] Automatic mode per source: publish without review, with delay, spacing (one post every N minutes) and active hours.
+- [ ] Duplicate guard: skip a post already published from any source.
+- [ ] Mirror edits: when the source edits a post, update our copy (Bot API delivers edits; deletions are not delivered to bots, so no delete mirroring).
+- [ ] One source to several destinations, each with its own rules.
+- [ ] Publish options: silent, pin, protect content in our channel, disable link preview, own URL buttons, drop original buttons.
+- [ ] Content calendar: planned and published posts on one list/calendar, bulk reschedule; optional auto-delete after N hours (ad posts).
+- [ ] Presets: save a rule set and apply it to several sources; export/import settings as a backup.
+- [ ] Alerts: the bot DMs the owner on failures or when a source stops sending.
+- [ ] Optional AI rewrite / translation (off by default, clearly labelled, no training on Telegram data, provider terms reviewed first).
+- **Not copied from competitors (outside our boundaries):** userbot/MTProto sessions, private or closed sources, protected-content copying, "click to reveal" bypass, removing other channels' watermarks, "uniqueness" tricks to dodge copyright complaints, auto-joining chats.
+- **Acceptance:** A new user can still connect a source and publish without opening the Kurallar drawer; every rule shows a before/after preview; rules never touch protected content.
 
 ## Constraints
 
