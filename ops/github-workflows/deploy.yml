@@ -1,5 +1,5 @@
 # CloneGRAM: one-click deploy to Cloudflare (Worker + D1 + panel, free tier).
-# Permission check completed; implementation follows in the next commit.
+# Lives in ops/github-workflows until someone with the "workflow" permission moves it to .github/workflows/deploy.yml.
 name: Deploy
 
 on:
