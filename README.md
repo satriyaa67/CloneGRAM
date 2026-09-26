@@ -2,11 +2,15 @@
 
 Sade bir içerik yayın stüdyosu: yetkili olduğunuz Telegram kaynaklarından gelen uygun içerikleri gözden geçirin, düzenleyin ve yönettiğiniz hedef kanalda yayımlayın. Ayrı kampanya modülü yalnızca bota açıkça abone olmuş kullanıcılara mesaj göndermek için tasarlanır.
 
-> **Şu an:** Statik, etkileşimli UI önizlemesi. Telegram API, kimlik doğrulama, veritabanı, medya işleme veya gerçek gönderim bağlı değildir.
+> **Şu an:** `site/` statik panel önizlemesi (örnek veri) ve `worker/` içinde Faz 1 API'si: Telegram Bot API ile kayıtlı kaynaklardan içerik alma, izin kontrolleri ve içerik kuyruğu. API yerelde 38 testle doğrulandı, henüz canlıya alınmadı. Yayınlama, medya düzenleme ve kampanyalar sonraki fazlarda.
 
 ## Yerel önizleme
 
 `site/index.html` dosyasını tarayıcıda açın ya da yerel bir statik sunucuda `site/` klasörünü yayınlayın.
+
+## API (Faz 1)
+
+Kurulum, uç noktalar ve test komutu: [`worker/README.md`](worker/README.md). Testler: `cd worker && node --test` (Node 22+, kurulum gerekmez).
 
 ## Cloudflare Pages ücretsiz prototip
 
@@ -15,11 +19,11 @@ Sade bir içerik yayın stüdyosu: yetkili olduğunuz Telegram kaynaklarından g
 3. Framework preset: **None**, build command boş, output directory: `site`.
 4. İlk dağıtım sonrası `*.pages.dev` adresi oluşur. Özel alan adını satın aldığınızda Pages ayarlarından eklersiniz.
 
-`wrangler.toml` Pages çıkış klasörünü belirtir. Bu konuşmada Cloudflare hesabı/API yetkisi bağlı olmadığından canlı dağıtım yapılmış değildir. Ücretsiz katman demo içindir; sürekli worker ve medya dönüştürme için üretim garantisi sayılmaz.
+Alternatif: `ops/github-workflows/deploy-pages.yml` şablonunu `.github/workflows/` altına kopyalayıp `CLOUDFLARE_API_TOKEN` ve `CLOUDFLARE_ACCOUNT_ID` repo secret'larını eklerseniz her `site/` değişikliği otomatik yayınlanır. Ücretsiz katman demo içindir; üretim garantisi sayılmaz.
 
 ## Ekipteki üç geliştirici aracı
 
-Claude Code proje ayarları `.claude/settings.json` içinde paylaşılır: Frontend Design ve Superpowers eklentileri etkinleştirilmiştir; ilk proje güveninde marketplace/eklenti kurulum onayı istenebilir. Context7 remote MCP `.mcp.json` ile tanımlanır; ayrıca `CLAUDE.md` kaynak belgeler için Context7 kullanımını ister.
+Claude Code proje ayarları `.claude/settings.json` içinde paylaşılır: Frontend Design ve Superpowers eklentileri etkinleştirilmiştir; ilk proje güveninde marketplace/eklenti kurulum onayı istenebilir. Context7 remote MCP `.mcp.json` ile tanımlanır; ayrıca `CLAUDE.md` kaynak belgeler için Context7 kullanımını ister. Superpowers çıktıları `docs/superpowers/specs` ve `docs/superpowers/plans` altında tutulur.
 
 Daha yüksek Context7 limitleri için isteğe bağlı API anahtarını kendi yerel ortamınızda tanımlayın, anahtarı depoya commit etmeyin. Projeye özel çalışma kuralları `CLAUDE.md` dosyasındadır.
 
@@ -34,8 +38,8 @@ Daha yüksek Context7 limitleri için isteğe bağlı API anahtarını kendi yer
 
 ## Teknoloji yönü
 
-Önizleme: düz HTML/CSS/JS, Cloudflare Pages.
-Ürün arka ucu önerisi: Cloudflare Workers ile webhook ve kısa API işleri, Supabase Postgres/Auth, Cloudflare R2 medya nesneleri, kuyruk üzerinden job yönlendirme; ağır medya işleme için ayrı container worker. Büyük medya dosyalarını edge işlevlerinde belleğe almayın.
+Panel: düz HTML/CSS/JS, Cloudflare Pages.
+API: Cloudflare Worker (bağımlılıksız JavaScript) + D1 (SQLite) veri deposu; tüm SQL tek bir adaptörde, ileride Postgres'e geçiş tek dosya işidir. Medya için Cloudflare R2 ve ağır medya işleme için ayrı container worker planlanıyor. Büyük medya dosyalarını edge işlevlerinde belleğe almayın.
 
 ## Plan
 

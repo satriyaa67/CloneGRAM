@@ -1,0 +1,14 @@
+{
+  "name": "clonegram-api",
+  "private": true,
+  "type": "module",
+  "description": "CloneGRAM API: Telegram Bot API intake, chat permission checks and content queue storage.",
+  "scripts": {
+    "test": "node --test",
+    "dev": "npx wrangler@4 dev",
+    "deploy": "npx wrangler@4 deploy",
+    "db:migrate:local": "npx wrangler@4 d1 migrations apply clonegram --local",
+    "db:migrate:remote": "npx wrangler@4 d1 migrations apply clonegram --remote"
+  },
+  "engines": { "node": ">=22" }
+}

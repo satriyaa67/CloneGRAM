@@ -1,6 +1,6 @@
 # CloneGRAM MVP implementation plan
 
-Scope source: [ClickUp product brief](https://app.clickup.com/1100360000017605/docs/z8rp3eu565-518). Current progress: static, local-only dashboard preview in `site/`. Do not treat sample content or status counts as production data.
+Scope source: [ClickUp product brief](https://app.clickup.com/1100360000017605/docs/z8rp3eu565-518). Current progress: static dashboard preview in `site/` and the Phase 1 intake API in `worker/` (tested locally, not yet deployed). Do not treat sample content or status counts in the preview as production data.
 
 ## Phase 0 · Foundation and review
 
@@ -8,16 +8,20 @@ Scope source: [ClickUp product brief](https://app.clickup.com/1100360000017605/d
 - [x] Establish brand palette: vivid cyan-blue, near-black ink, warm white; use an original mark rather than Telegram’s official plane.
 - [x] Add project-level Frontend Design and Superpowers plugin configuration, Context7 MCP configuration, and `CLAUDE.md` product boundaries.
 - [x] Prepare Cloudflare Pages static-output configuration.
-- [ ] Review prototype with product owner and confirm the first backend slice.
+- [x] Review prototype with product owner and confirm the first backend slice (2026-09-26: proceed with Phase 1).
 - **Acceptance:** Static preview opens without secrets; it clearly labels demo-only data and has no live send/connect calls.
 
 ## Phase 1 · Telegram connection and source intake
 
-- [ ] Create bot connection setup that keeps bot tokens in server-side secrets only.
-- [ ] Validate source membership/access and destination-channel posting permission before enabling a flow.
-- [ ] Receive webhook updates, verify Telegram webhook secret, deduplicate by update/message ID, and persist minimal metadata.
-- [ ] Detect protected/restricted content before file operations; skip it without alternate extraction attempts.
-- **Acceptance:** Only accessible, unprotected, rights-cleared new posts enter the queue; repeated webhook delivery cannot create duplicates.
+Design: [spec](superpowers/specs/2026-09-26-phase-1-telegram-intake-design.md) · Plan: [tasks](superpowers/plans/2026-09-26-phase-1-telegram-intake.md) · Guide: [`worker/README.md`](../worker/README.md)
+
+- [x] Create bot connection setup that keeps bot tokens in server-side secrets only.
+- [x] Validate source membership/access and destination-channel posting permission before enabling a flow.
+- [x] Receive webhook updates, verify Telegram webhook secret, deduplicate by chat/message ID, and persist minimal metadata.
+- [x] Detect protected/restricted content before file operations; skip it without alternate extraction attempts.
+- [ ] Enable CI from `ops/github-workflows/` (needs a maintainer; automation lacks the GitHub workflow permission).
+- [ ] Live smoke test with a real bot on Cloudflare (needs account, D1 id, bot token).
+- **Acceptance:** Only accessible, unprotected, rights-cleared new posts enter the queue; repeated webhook delivery cannot create duplicates. Covered by 38 automated tests.
 
 ## Phase 2 · Content review and transforms
 
@@ -46,8 +50,8 @@ Scope source: [ClickUp product brief](https://app.clickup.com/1100360000017605/d
 
 ## Phase 5 · SaaS, hosting and beta readiness
 
-- [ ] Implement authentication, tenant isolation, owner/editor roles, quotas and retention controls.
-- [ ] Connect Supabase Postgres/Auth and Cloudflare R2 with least privilege and private buckets.
+- [ ] Implement authentication, tenant isolation, owner/editor roles, quotas and retention controls (replaces the Phase 1 admin bearer token).
+- [ ] Confirm the data store (D1 now; Postgres adapter if scale or features demand it) and connect Cloudflare R2 with least privilege and private buckets.
 - [ ] Add separate worker/container for FFmpeg/heavy media tasks; keep Workers for short webhook/API operations.
 - [ ] Connect repository to Cloudflare Pages, configure preview and production environments, add runtime secrets out-of-band.
 - [ ] Run security, accessibility, mobile, integration, privacy, and recovery tests before inviting users.
@@ -61,7 +65,7 @@ Scope source: [ClickUp product brief](https://app.clickup.com/1100360000017605/d
 
 ## Free prototype hosting
 
-Cloudflare Pages can serve the static preview on a `pages.dev` subdomain at no charge within current free-tier limits. A domain is optional until purchased. No Cloudflare account is connected in this work session, so no live deployment has been made. Free hosting is for prototype use only; production jobs, persistent workers, media processing, and uptime need a separately reviewed plan.
+Cloudflare Pages (dashboard) and Workers + D1 (API) can run on free tiers within their limits; a domain is optional until purchased. No Cloudflare account is connected in this work session, so nothing is deployed yet. Free hosting is for prototype use only; production jobs, persistent workers, media processing, and uptime need a separately reviewed plan.
 
 ## Reference sources
 
@@ -71,5 +75,4 @@ Cloudflare Pages can serve the static preview on a `pages.dev` subdomain at no c
 - Telegram [Bot API](https://core.telegram.org/bots/api)
 - [Cloudflare Pages limits](https://developers.cloudflare.com/pages/platform/limits/)
 - [Cloudflare Workers limits](https://developers.cloudflare.com/workers/platform/limits/)
-- [Supabase pricing](https://supabase.com/pricing)
 - [Cloudflare R2 pricing](https://developers.cloudflare.com/r2/pricing/)
