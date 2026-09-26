@@ -22,5 +22,16 @@ export function fakeTelegram({ me = BOT, chats = {}, members = {}, calls = [] } 
     },
     async getChatMember(chatId, userId) { calls.push(['getChatMember', chatId, userId]); return members[chatId] ?? { status: 'left' }; },
     async setWebhook(options) { calls.push(['setWebhook', options]); return true; },
+    webhookInfo: { url: 'https://api.test/telegram/webhook', pending_update_count: 0 },
+    async getWebhookInfo() { calls.push(['getWebhookInfo']); return this.webhookInfo; },
+  };
+}
+
+export function membershipUpdate({ updateId = 50, chatId = -1001, title = 'Studio Notes', type = 'channel', username = 'studio_notes', status = 'administrator', canPost } = {}) {
+  const member = { status, user: { id: BOT.id, is_bot: true } };
+  if (canPost !== undefined) member.can_post_messages = canPost;
+  return {
+    update_id: updateId,
+    my_chat_member: { chat: { id: chatId, type, title, username }, from: { id: 1 }, date: 1790400000, old_chat_member: { status: 'left' }, new_chat_member: member },
   };
 }

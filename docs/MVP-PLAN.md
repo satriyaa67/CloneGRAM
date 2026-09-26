@@ -1,13 +1,13 @@
 # CloneGRAM MVP implementation plan
 
-Scope source: [ClickUp product brief](https://app.clickup.com/1100360000017605/docs/z8rp3eu565-518). Current progress: static dashboard preview in `site/` and the Phase 1 intake API in `worker/` (tested locally, not yet deployed). Do not treat sample content or status counts in the preview as production data.
+Scope source: [ClickUp product brief](https://app.clickup.com/1100360000017605/docs/z8rp3eu565-518). Current progress: Phase 1 is ready to go live. One Cloudflare Worker serves the panel (`site/`) and the intake API (`worker/`); a GitHub Actions workflow deploys both. Sample data only appears in the panel's explicit demo mode.
 
 ## Phase 0 Â· Foundation and review
 
 - [x] Create simple Turkish dashboard preview with Overview, Content Queue, Campaigns, Connections, and Settings sections.
 - [x] Establish brand palette: vivid cyan-blue, near-black ink, warm white; use an original mark rather than Telegramâ€™s official plane.
 - [x] Add project-level Frontend Design and Superpowers plugin configuration, Context7 MCP configuration, and `CLAUDE.md` product boundaries.
-- [x] Prepare Cloudflare Pages static-output configuration.
+- [x] Prepare free hosting configuration (Pages first; replaced in Phase 1 by a single Worker serving panel and API).
 - [x] Review prototype with product owner and confirm the first backend slice (2026-09-26: proceed with Phase 1).
 - **Acceptance:** Static preview opens without secrets; it clearly labels demo-only data and has no live send/connect calls.
 
@@ -19,9 +19,13 @@ Design: [spec](superpowers/specs/2026-09-26-phase-1-telegram-intake-design.md) Â
 - [x] Validate source membership/access and destination-channel posting permission before enabling a flow.
 - [x] Receive webhook updates, verify Telegram webhook secret, deduplicate by chat/message ID, and persist minimal metadata.
 - [x] Detect protected/restricted content before file operations; skip it without alternate extraction attempts.
-- [ ] Enable CI from `ops/github-workflows/` (needs a maintainer; automation lacks the GitHub workflow permission).
-- [ ] Live smoke test with a real bot on Cloudflare (needs account, D1 id, bot token).
-- **Acceptance:** Only accessible, unprotected, rights-cleared new posts enter the queue; repeated webhook delivery cannot create duplicates. Covered by 38 automated tests.
+- [x] Record chats the bot is added to (`my_chat_member`) so the panel can register them in one click.
+- [x] Live panel: sign-in gate (admin token, session-only), overview with setup checklist, queue with filters, connections, settings with webhook health; demo mode kept for offline review.
+- [x] Single-Worker deploy workflow (`ops/github-workflows/deploy.yml`): tests, D1 find-or-create, migrations, deploy, secrets, webhook.
+- [ ] Move `ci.yml` and `deploy.yml` into `.github/workflows/` (needs a maintainer; automation lacks the GitHub workflow permission).
+- [ ] Add repository secrets and run the first deploy (needs Cloudflare account, bot token).
+- [ ] Live smoke test by the product owner: bot added to a source and a destination, a new source post appears in the queue.
+- **Acceptance:** Only accessible, unprotected, rights-cleared new posts enter the queue; repeated webhook delivery cannot create duplicates. Covered by 46 automated tests plus a scripted panel walkthrough against the real app.
 
 ## Phase 2 Â· Content review and transforms
 
@@ -53,7 +57,7 @@ Design: [spec](superpowers/specs/2026-09-26-phase-1-telegram-intake-design.md) Â
 - [ ] Implement authentication, tenant isolation, owner/editor roles, quotas and retention controls (replaces the Phase 1 admin bearer token).
 - [ ] Confirm the data store (D1 now; Postgres adapter if scale or features demand it) and connect Cloudflare R2 with least privilege and private buckets.
 - [ ] Add separate worker/container for FFmpeg/heavy media tasks; keep Workers for short webhook/API operations.
-- [ ] Connect repository to Cloudflare Pages, configure preview and production environments, add runtime secrets out-of-band.
+- [ ] Add a preview environment and a custom domain once purchased; keep runtime secrets out-of-band.
 - [ ] Run security, accessibility, mobile, integration, privacy, and recovery tests before inviting users.
 - **Acceptance:** Production build has no secrets in Git or client bundle; backups/retention and error alerting work; end-to-end test confirms permission and consent guards.
 
@@ -61,11 +65,11 @@ Design: [spec](superpowers/specs/2026-09-26-phase-1-telegram-intake-design.md) Â
 
 - No protected-content bypass, scraping, unauthorized copying, unsolicited cold DMs, user-account MTProto automation, proxy/account rotation, or ban evasion.
 - Treat Telegram API data under current Telegram API/Bot Platform terms. Never train/fine-tune AI on Telegram content.
-- Browser preview is a design aid only. The live application needs a secure backend before real channels, users, or media are connected.
+- The admin bearer token is a single-operator stopgap; do not invite other users before Phase 5 auth.
 
 ## Free prototype hosting
 
-Cloudflare Pages (dashboard) and Workers + D1 (API) can run on free tiers within their limits; a domain is optional until purchased. No Cloudflare account is connected in this work session, so nothing is deployed yet. Free hosting is for prototype use only; production jobs, persistent workers, media processing, and uptime need a separately reviewed plan.
+One Cloudflare Worker (static assets + API) and D1 run on the free tier within its limits; a domain is optional until purchased. D1 was chosen over free Supabase because free Supabase projects pause when idle, which would break webhooks. Free hosting is for prototype use only; production jobs, media processing, and uptime need a separately reviewed plan.
 
 ## Reference sources
 
@@ -73,6 +77,7 @@ Cloudflare Pages (dashboard) and Workers + D1 (API) can run on free tiers within
 - Telegram [content protection](https://core.telegram.org/api/content-protection)
 - Telegram [Bots FAQ](https://core.telegram.org/bots/faq)
 - Telegram [Bot API](https://core.telegram.org/bots/api)
-- [Cloudflare Pages limits](https://developers.cloudflare.com/pages/platform/limits/)
+- [Cloudflare Workers static assets](https://developers.cloudflare.com/workers/static-assets/)
 - [Cloudflare Workers limits](https://developers.cloudflare.com/workers/platform/limits/)
+- [Cloudflare D1 limits](https://developers.cloudflare.com/d1/platform/limits/)
 - [Cloudflare R2 pricing](https://developers.cloudflare.com/r2/pricing/)

@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { normalizeUpdate } from '../src/intake/normalize.js';
-import { channelPost } from './helpers/fixtures.js';
+import { channelPost, membershipUpdate } from './helpers/fixtures.js';
 
 test('normalizes a text channel post', () => {
   const post = normalizeUpdate(channelPost());
@@ -37,4 +37,14 @@ test('ignores unsupported, private and service updates', () => {
   assert.equal(normalizeUpdate({ update_id: 6, message: { message_id: 1, date: 1, chat: { id: 7, type: 'private' }, text: 'hi' } }).reason, 'private_chat');
   assert.equal(normalizeUpdate({ update_id: 7, message: { message_id: 1, date: 1, chat: { id: -5, type: 'supergroup' }, new_chat_members: [] } }).reason, 'unsupported_message');
   assert.equal(normalizeUpdate({}).kind, 'invalid');
+});
+
+test('normalizes bot membership changes and ignores private ones', () => {
+  const m = normalizeUpdate(membershipUpdate({ canPost: false }));
+  assert.equal(m.kind, 'membership');
+  assert.equal(m.botStatus, 'administrator');
+  assert.equal(m.canPost, false);
+  assert.equal(m.username, 'studio_notes');
+  assert.equal(normalizeUpdate(membershipUpdate()).canPost, null);
+  assert.equal(normalizeUpdate(membershipUpdate({ type: 'private' })).kind, 'ignored');
 });

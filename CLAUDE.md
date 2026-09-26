@@ -4,6 +4,7 @@
 - Keep the interface calm, distinctive, professional, and deliberately simple. Primary navigation is Overview, Content Queue, Campaigns, Connections, Settings. Progressive disclosure beats adding more dashboard cards.
 - Preserve the brand palette from the supplied mark: vivid Telegram-like cyan-blue, near-black ink, and warm white. Use the wordmark `CloneGRAM`; use the project's original circular loop mark in `site/assets/clonegram-mark.svg`, not Telegram's official icon. Do not reuse the supplied slogan “DON'T FORWARD. CLONE.” Use neutral copy such as “Source. Refine. Publish.”
 - For frontend work, apply the Frontend Design skill. Use accessible semantics, visible keyboard focus, responsive mobile navigation, reduced-motion support, and truthful loading/error/empty states.
+- Panel code (`site/`) stays framework-free: no inline scripts or styles (strict CSP in `site/_headers`), render user and Telegram text with `textContent` only.
 
 ## Research and workflow
 - Use Context7 for current framework/library/API documentation before implementation; the project MCP config is `.mcp.json`.
@@ -20,5 +21,5 @@
 
 ## Architecture
 - Tenant isolation, idempotent webhook processing, explicit job states, retry/backoff, audit trail, and least-privilege scopes are required for backend work.
-- Cloudflare Pages hosts the static UI. The Worker in `worker/` handles webhook/API work; Cloudflare D1 is the prototype data store behind `worker/src/storage/d1.js` (keep all SQL there so a Postgres adapter can replace it). R2 will store media bytes. Keep heavy media processing in a separate worker/container; do not buffer media through a Worker.
-- Deploy only after checking production configuration, secrets, quotas, legal/platform requirements, and a real end-to-end test.
+- One Cloudflare Worker (`worker/`) serves the panel from `site/` as static assets and handles `/api/*`, `/telegram/webhook` and `/health` on the same origin. Cloudflare D1 is the prototype data store behind `worker/src/storage/d1.js` (keep all SQL there so a Postgres adapter can replace it). New schema changes go in a new numbered file in `worker/migrations/`. R2 will store media bytes. Keep heavy media processing in a separate worker/container; do not buffer media through a Worker.
+- Deploys go through `.github/workflows/deploy.yml` (template in `ops/github-workflows/`). Deploy only after checking production configuration, secrets, quotas, legal/platform requirements, and a real end-to-end test.

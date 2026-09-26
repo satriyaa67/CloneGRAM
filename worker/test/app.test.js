@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createApp } from '../src/app.js';
 import { createD1Store } from '../src/storage/d1.js';
 import { createTestD1 } from './helpers/d1.js';
-import { channelPost, fakeTelegram } from './helpers/fixtures.js';
+import { channelPost, fakeTelegram, membershipUpdate } from './helpers/fixtures.js';
 import { TelegramRateLimitError } from '../src/telegram/client.js';
 
 const env = { TELEGRAM_WEBHOOK_SECRET: 'hook_secret-1', ADMIN_API_TOKEN: 'admin-token', ALLOWED_ORIGIN: 'https://clonegram.pages.dev' };
@@ -98,7 +98,7 @@ test('webhook setup enforces https, path and a valid secret', async () => {
   assert.equal(ok.status, 200);
   const [, options] = telegram.calls.find(([name]) => name === 'setWebhook');
   assert.equal(options.secret_token, env.TELEGRAM_WEBHOOK_SECRET);
-  assert.deepEqual(options.allowed_updates, ['channel_post', 'message']);
+  assert.deepEqual(options.allowed_updates, ['channel_post', 'message', 'my_chat_member']);
 });
 
 test('Telegram rate limits become 503 with Retry-After', async () => {
@@ -119,4 +119,53 @@ test('CORS only for the configured dashboard origin', async () => {
 test('unknown routes return 404', async () => {
   assert.equal((await app(new Request('https://api.test/nope'))).status, 404);
   assert.equal((await app(admin('/api/nope'))).status, 404);
+});
+
+test('status reports bot and webhook health without secrets', async () => {
+  telegram.webhookInfo = { url: 'https://api.test/telegram/webhook', pending_update_count: 3, last_error_date: 1790400000, last_error_message: 'Wrong response from the webhook: 500' };
+  const body = await (await app(admin('/api/status'))).json();
+  assert.deepEqual(body, {
+    ok: true,
+    bot: { username: 'clonegram_bot', canReadAllGroupMessages: false },
+    webhook: { active: true, pendingUpdates: 3, lastError: 'Wrong response from the webhook: 500', lastErrorAt: new Date(1790400000 * 1000).toISOString() },
+  });
+  telegram.webhookInfo = { url: '', pending_update_count: 0 };
+  assert.equal((await (await app(admin('/api/status'))).json()).webhook.active, false);
+});
+
+test('bot membership updates appear as discovered chats with registered roles', async () => {
+  assert.equal((await (await app(hook(membershipUpdate()))).json()).result, 'membership_recorded');
+  await app(hook(membershipUpdate({ updateId: 51, chatId: -9009, title: 'Yayın', username: undefined, canPost: true })));
+  await app(hook(membershipUpdate({ updateId: 52, chatId: -7007, title: 'Eski', status: 'left' })));
+  await app(admin('/api/chats', { method: 'POST', body: JSON.stringify({ chatId: -1001, role: 'source', rightsConfirmed: true }) }));
+
+  const { chats } = await (await app(admin('/api/discovered'))).json();
+  assert.equal(chats.length, 2, 'left chats are hidden');
+  const studio = chats.find((c) => c.telegram_chat_id === -1001);
+  const yayin = chats.find((c) => c.telegram_chat_id === -9009);
+  assert.equal(studio.registered_roles, 'source');
+  assert.equal(yayin.registered_roles, null);
+  assert.equal(yayin.can_post, 1);
+});
+
+test('summary counts queue statuses and registered chats', async () => {
+  await app(admin('/api/chats', { method: 'POST', body: JSON.stringify({ chatId: -1001, role: 'source', rightsConfirmed: true }) }));
+  await app(admin('/api/chats', { method: 'POST', body: JSON.stringify({ chatId: -9009, role: 'destination' }) }));
+  await app(hook(channelPost({ messageId: 1 })));
+  await app(hook(channelPost({ updateId: 2, messageId: 2 })));
+  await app(hook(channelPost({ updateId: 3, messageId: 3, extra: { has_protected_content: true } })));
+  const body = await (await app(admin('/api/summary'))).json();
+  assert.deepEqual(body, { ok: true, content: { received: 2, skipped: 1 }, chats: { source: 1, destination: 1 } });
+});
+
+test('queue items include the source title', async () => {
+  await app(admin('/api/chats', { method: 'POST', body: JSON.stringify({ chatId: -1001, role: 'source', rightsConfirmed: true }) }));
+  await app(hook(channelPost()));
+  const [item] = (await (await app(admin('/api/content'))).json()).items;
+  assert.equal(item.source_title, 'Studio Notes');
+  assert.equal(item.source_username, 'studio_notes');
+});
+
+test('JSON responses carry nosniff', async () => {
+  assert.equal((await app(new Request('https://api.test/health'))).headers.get('x-content-type-options'), 'nosniff');
 });

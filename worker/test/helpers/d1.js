@@ -1,9 +1,14 @@
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 
-const schema = readFileSync(new URL('../../migrations/0001_init.sql', import.meta.url), 'utf8');
+const migrationsDir = new URL('../../migrations/', import.meta.url);
+const schema = readdirSync(migrationsDir)
+  .filter((name) => name.endsWith('.sql'))
+  .sort()
+  .map((name) => readFileSync(new URL(name, migrationsDir), 'utf8'))
+  .join('\n');
 
-/** In-memory stand-in for a Cloudflare D1 binding, backed by node:sqlite and the real migration. */
+/** In-memory stand-in for a Cloudflare D1 binding, backed by node:sqlite and every real migration in order. */
 export function createTestD1() {
   const db = new DatabaseSync(':memory:');
   db.exec(schema);
