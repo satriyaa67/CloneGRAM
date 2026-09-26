@@ -2,24 +2,15 @@
 
 Sade bir içerik yayın stüdyosu: yetkili olduğunuz Telegram kaynaklarından gelen uygun içerikleri gözden geçirin, düzenleyin ve yönettiğiniz hedef kanalda yayımlayın. Ayrı kampanya modülü yalnızca bota açıkça abone olmuş kullanıcılara mesaj göndermek için tasarlanır.
 
-> **Şu an:** `site/` statik panel önizlemesi (örnek veri) ve `worker/` içinde Faz 1 API'si: Telegram Bot API ile kayıtlı kaynaklardan içerik alma, izin kontrolleri ve içerik kuyruğu. API yerelde 38 testle doğrulandı, henüz canlıya alınmadı. Yayınlama, medya düzenleme ve kampanyalar sonraki fazlarda.
+> **Şu an:** Faz 1 canlıya hazır. Tek bir Cloudflare Worker hem paneli (`site/`) hem API'yi (`worker/`) aynı adresten sunar: bot bağlantısı, botun eklendiği kanalları otomatik listeleme, izin kontrolleri ve içerik kuyruğu. 46 otomatik test. Yayınlama, medya düzenleme ve kampanyalar sonraki fazlarda.
+
+## Canlıya alma (ücretsiz, Cloudflare)
+
+Adımlar: [`ops/github-workflows/README.md`](ops/github-workflows/README.md). Özetle: `deploy.yml` dosyasını `.github/workflows/` altına taşı, dört repo secret'ı ekle, **Actions > Deploy > Run workflow**. Panel adresi çalıştırma özetinde çıkar (`https://clonegram.<alt-alan>.workers.dev`). Alan adı alındığında Worker'a özel alan adı olarak bağlanır.
 
 ## Yerel önizleme
 
-`site/index.html` dosyasını tarayıcıda açın ya da yerel bir statik sunucuda `site/` klasörünü yayınlayın.
-
-## API (Faz 1)
-
-Kurulum, uç noktalar ve test komutu: [`worker/README.md`](worker/README.md). Testler: `cd worker && node --test` (Node 22+, kurulum gerekmez).
-
-## Cloudflare Pages ücretsiz prototip
-
-1. Cloudflare hesabınızda **Workers & Pages → Create → Pages → Connect to Git** yolunu izleyin.
-2. `satriyaa67/CloneGRAM` deposunu seçin.
-3. Framework preset: **None**, build command boş, output directory: `site`.
-4. İlk dağıtım sonrası `*.pages.dev` adresi oluşur. Özel alan adını satın aldığınızda Pages ayarlarından eklersiniz.
-
-Alternatif: `ops/github-workflows/deploy-pages.yml` şablonunu `.github/workflows/` altına kopyalayıp `CLOUDFLARE_API_TOKEN` ve `CLOUDFLARE_ACCOUNT_ID` repo secret'larını eklerseniz her `site/` değişikliği otomatik yayınlanır. Ücretsiz katman demo içindir; üretim garantisi sayılmaz.
+`site/index.html` dosyasını açıp **Örnek verilerle incele** seçeneğiyle paneli ağsız gezebilirsiniz. API: [`worker/README.md`](worker/README.md), testler `cd worker && node --test` (Node 22+, kurulum gerekmez).
 
 ## Ekipteki üç geliştirici aracı
 
@@ -38,8 +29,8 @@ Daha yüksek Context7 limitleri için isteğe bağlı API anahtarını kendi yer
 
 ## Teknoloji yönü
 
-Panel: düz HTML/CSS/JS, Cloudflare Pages.
-API: Cloudflare Worker (bağımlılıksız JavaScript) + D1 (SQLite) veri deposu; tüm SQL tek bir adaptörde, ileride Postgres'e geçiş tek dosya işidir. Medya için Cloudflare R2 ve ağır medya işleme için ayrı container worker planlanıyor. Büyük medya dosyalarını edge işlevlerinde belleğe almayın.
+Panel: düz HTML/CSS/JS, Worker'ın statik varlıkları olarak sunulur (aynı origin, sıkı CSP).
+API: Cloudflare Worker (bağımlılıksız JavaScript) + D1 (SQLite); tüm SQL tek bir adaptörde, ileride Postgres'e geçiş tek dosya işidir. Medya için Cloudflare R2 ve ağır medya işleme için ayrı container worker planlanıyor. Büyük medya dosyalarını edge işlevlerinde belleğe almayın.
 
 ## Plan
 
