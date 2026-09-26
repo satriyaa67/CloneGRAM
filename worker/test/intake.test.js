@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { processUpdate } from '../src/intake/service.js';
 import { createD1Store } from '../src/storage/d1.js';
 import { createTestD1 } from './helpers/d1.js';
-import { channelPost } from './helpers/fixtures.js';
+import { channelPost, membershipUpdate } from './helpers/fixtures.js';
 
 let store;
 const now = () => new Date('2026-09-26T10:00:00Z');
@@ -62,4 +62,21 @@ test('listContentItems validates status and clamps limit', async () => {
   for (let i = 0; i < 3; i++) await processUpdate(channelPost({ updateId: i, messageId: 100 + i }), { store, now });
   assert.equal((await store.listContentItems({ limit: 2 })).length, 2);
   assert.equal((await store.listContentItems({ limit: 'abc' })).length, 3);
+});
+
+test('membership updates never create queue items', async () => {
+  const result = await processUpdate(membershipUpdate(), { store, now });
+  assert.equal(result.status, 'membership_recorded');
+  assert.equal((await store.listContentItems()).length, 0);
+  const [chat] = await store.listDiscoveredChats();
+  assert.equal(chat.title, 'Studio Notes');
+});
+
+test('re-adding a bot updates the discovered chat instead of duplicating it', async () => {
+  await processUpdate(membershipUpdate({ status: 'member' }), { store, now });
+  await processUpdate(membershipUpdate({ updateId: 51, status: 'administrator', title: 'Yeni ad' }), { store, now });
+  const chats = await store.listDiscoveredChats();
+  assert.equal(chats.length, 1);
+  assert.equal(chats[0].title, 'Yeni ad');
+  assert.equal(chats[0].bot_status, 'administrator');
 });
