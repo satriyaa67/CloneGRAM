@@ -2,7 +2,7 @@
 
 Sade bir içerik yayın stüdyosu: yetkili olduğunuz Telegram kaynaklarından gelen uygun içerikleri gözden geçirin, düzenleyin ve yönettiğiniz hedef kanalda yayımlayın. Ayrı kampanya modülü yalnızca bota açıkça abone olmuş kullanıcılara mesaj göndermek için tasarlanır.
 
-> **Şu an:** Faz 1 canlıya hazır. Tek bir Cloudflare Worker hem paneli (`site/`) hem API'yi (`worker/`) aynı adresten sunar: bot bağlantısı, botun eklendiği kanalları otomatik listeleme, izin kontrolleri ve içerik kuyruğu. 46 otomatik test. Yayınlama, medya düzenleme ve kampanyalar sonraki fazlarda.
+> **Şu an:** Faz 1 canlıda, Faz 1.1 eklendi. Tek bir Cloudflare Worker hem paneli (`site/`) hem API'yi (`worker/`) aynı adresten sunar: bot bağlantısı, botun eklendiği kanalları otomatik listeleme, izin kontrolleri, içerik kuyruğu, tek tıkla hedefe gönderme, iptal/geri alma, test mesajı, açık/koyu tema. 58 otomatik test. Metin düzenleme, filigran, otomatik yayın ve kampanyalar sonraki fazlarda.
 
 ## Canlıya alma (ücretsiz, Cloudflare)
 

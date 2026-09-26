@@ -1,6 +1,6 @@
 # CloneGRAM API (Cloudflare Worker)
 
-One Worker serves both the panel (`../site`, as static assets) and the API, on the same origin. Phase 1 receives posts from registered Telegram sources through the official Bot API and stores eligible ones in a content queue. Protected content is recorded as skipped without its text or media reference. Nothing is published yet.
+One Worker serves both the panel (`../site`, as static assets) and the API, on the same origin. It receives posts from registered Telegram sources through the official Bot API and stores eligible ones in a content queue. Protected content is recorded as skipped without its text or media reference. An operator publishes a queued post to a destination with one click (Telegram `copyMessage`, albums via `copyMessages`); automatic publishing is Phase 3.
 
 ## Run the tests
 
@@ -55,8 +55,12 @@ A `422 chat_not_eligible` response lists the reasons, for example `bot_not_admin
 | GET | `/api/discovered` | bearer | Chats the bot was added to, with any registered roles |
 | GET | `/api/chats` | bearer | Registered chats |
 | POST | `/api/chats` | bearer | Register a source or destination after permission checks |
-| GET | `/api/content?status=&limit=` | bearer | Content queue with source title (`received`, `skipped`, ...) |
+| GET | `/api/content?status=&limit=` | bearer | Content queue with source and destination titles (`received`, `published`, `cancelled`, `failed`, `skipped`, ...) |
 | POST | `/api/telegram/webhook` | bearer | Point Telegram at this Worker |
+| POST | `/api/content/:id/publish` | bearer | Copy the post (whole album) to a destination; body `{ "destinationChatId": -100… }`, optional when there is one destination |
+| POST | `/api/content/:id/cancel` | bearer | Cancel a waiting or failed post (whole album) |
+| POST | `/api/content/:id/restore` | bearer | Put a cancelled post back in the queue |
+| POST | `/api/chats/:chatId/test` | bearer | Send a silent test message to a registered destination |
 
 The bearer admin token is a Phase 1 stopgap; Phase 5 replaces it with real accounts. The panel keeps it in `sessionStorage` only.
 
