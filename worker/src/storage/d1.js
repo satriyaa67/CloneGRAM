@@ -1,8 +1,13 @@
 const CHAT_COLUMNS = 'id, workspace_id, telegram_chat_id, role, title, chat_type, username, protected_content, rights_confirmed, active, last_checked_at, created_at';
-const ITEM_COLUMNS = 'i.id, i.source_id, i.telegram_chat_id, i.telegram_message_id, i.media_type, i.text, i.file_id, i.media_group_id, i.status, i.skip_reason, i.posted_at, i.received_at, c.title AS source_title, c.username AS source_username';
-const ITEM_FROM = 'FROM content_items i LEFT JOIN chats c ON c.id = i.source_id';
+const ITEM_COLUMNS = `i.id, i.source_id, i.telegram_chat_id, i.telegram_message_id, i.media_type, i.text, i.file_id, i.media_group_id, i.status, i.skip_reason,
+  i.posted_at, i.received_at, i.published_chat_id, i.published_message_id, i.published_at, i.last_error,
+  c.title AS source_title, c.username AS source_username, d.title AS destination_title`;
+const ITEM_FROM = `FROM content_items i
+  LEFT JOIN chats c ON c.id = i.source_id
+  LEFT JOIN chats d ON d.workspace_id = i.workspace_id AND d.telegram_chat_id = i.published_chat_id AND d.role = 'destination'`;
+const ACTIONABLE = "('received', 'failed')";
 const ACTIVE_BOT_STATUSES = "('creator', 'administrator', 'member', 'restricted')";
-const STATUSES = new Set(['received', 'in_review', 'scheduled', 'published', 'skipped', 'failed']);
+const STATUSES = new Set(['received', 'in_review', 'scheduled', 'publishing', 'published', 'cancelled', 'skipped', 'failed']);
 
 /** Storage adapter over a Cloudflare D1 binding (prepare/bind/run/first/all). */
 export function createD1Store(db) {
@@ -111,6 +116,76 @@ export function createD1Store(db) {
         .all();
       const toMap = (rows, key) => Object.fromEntries((rows.results ?? []).map((row) => [row[key], Number(row.n)]));
       return { content: toMap(content, 'status'), chats: toMap(chats, 'role') };
+    },
+
+    async getContentItem(id, workspaceId = 'default') {
+      return db.prepare(`SELECT ${ITEM_COLUMNS} ${ITEM_FROM} WHERE i.workspace_id = ? AND i.id = ?`).bind(workspaceId, id).first();
+    },
+
+    /** The item plus its album siblings (same source and media_group_id), oldest message first. */
+    async getItemWithGroup(item, workspaceId = 'default') {
+      if (!item.media_group_id) return [item];
+      const { results } = await db
+        .prepare(`SELECT ${ITEM_COLUMNS} ${ITEM_FROM} WHERE i.workspace_id = ? AND i.telegram_chat_id = ? AND i.media_group_id = ? ORDER BY i.telegram_message_id`)
+        .bind(workspaceId, item.telegram_chat_id, item.media_group_id)
+        .all();
+      return results ?? [item];
+    },
+
+    /** Atomically moves actionable items to `publishing`; returns only the ids this call claimed. */
+    async claimForPublish(ids, at, workspaceId = 'default') {
+      if (ids.length === 0) return [];
+      const marks = ids.map(() => '?').join(', ');
+      const { results } = await db
+        .prepare(`UPDATE content_items SET status = 'publishing', last_error = NULL, updated_at = ? WHERE workspace_id = ? AND id IN (${marks}) AND status IN ${ACTIONABLE} RETURNING id`)
+        .bind(at, workspaceId, ...ids)
+        .all();
+      return (results ?? []).map((row) => row.id);
+    },
+
+    async markPublished(ids, { chatId, messageId, at }, workspaceId = 'default') {
+      if (ids.length === 0) return;
+      const marks = ids.map(() => '?').join(', ');
+      await db
+        .prepare(`UPDATE content_items SET status = 'published', published_chat_id = ?, published_message_id = ?, published_at = ?, last_error = NULL, updated_at = ? WHERE workspace_id = ? AND id IN (${marks}) AND status = 'publishing'`)
+        .bind(chatId, messageId, at, at, workspaceId, ...ids)
+        .run();
+    },
+
+    async markFailed(ids, error, at, workspaceId = 'default') {
+      if (ids.length === 0) return;
+      const marks = ids.map(() => '?').join(', ');
+      await db
+        .prepare(`UPDATE content_items SET status = 'failed', last_error = ?, updated_at = ? WHERE workspace_id = ? AND id IN (${marks}) AND status = 'publishing'`)
+        .bind(String(error).slice(0, 500), at, workspaceId, ...ids)
+        .run();
+    },
+
+    /** from -> to for the given ids; returns how many rows changed. */
+    async transition(ids, from, to, at, workspaceId = 'default') {
+      if (ids.length === 0) return 0;
+      const marks = ids.map(() => '?').join(', ');
+      const fromMarks = from.map(() => '?').join(', ');
+      const result = await db
+        .prepare(`UPDATE content_items SET status = ?, updated_at = ? WHERE workspace_id = ? AND id IN (${marks}) AND status IN (${fromMarks})`)
+        .bind(to, at, workspaceId, ...ids, ...from)
+        .run();
+      return result?.meta?.changes ?? 0;
+    },
+
+    async getActiveDestination(telegramChatId, workspaceId = 'default') {
+      return db
+        .prepare(`SELECT ${CHAT_COLUMNS} FROM chats WHERE workspace_id = ? AND telegram_chat_id = ? AND role = 'destination' AND active = 1`)
+        .bind(workspaceId, telegramChatId)
+        .first();
+    },
+
+    async listActiveDestinations(workspaceId = 'default') {
+      const { results } = await db
+        .prepare(`SELECT ${CHAT_COLUMNS} FROM chats WHERE workspace_id = ? AND role = 'destination' AND active = 1 ORDER BY title`)
+        .bind(workspaceId)
+        .all();
+      return results ?? [];
     },
   };
 }

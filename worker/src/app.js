@@ -3,6 +3,7 @@ import { safeEqual, bearerToken } from './lib/security.js';
 import { processUpdate } from './intake/service.js';
 import { checkChatAccess } from './telegram/permissions.js';
 import { TelegramApiError, TelegramRateLimitError } from './telegram/client.js';
+import { publishItem, changeQueueState, PublishError } from './publish/service.js';
 
 const WEBHOOK_SECRET_PATTERN = /^[A-Za-z0-9_-]{1,256}$/;
 const ALLOWED_UPDATES = ['channel_post', 'message', 'my_chat_member'];
@@ -34,6 +35,9 @@ export function createApp({ env, store, telegram, now = () => new Date() }) {
       }
       return fail(404, 'not_found', {}, cors);
     } catch (error) {
+      if (error instanceof PublishError) {
+        return fail(error.status, error.code, error.extra, cors);
+      }
       if (error instanceof TelegramRateLimitError) {
         return fail(503, 'telegram_rate_limited', { retryAfter: error.retryAfter }, { ...cors, 'retry-after': String(error.retryAfter) });
       }
@@ -90,6 +94,20 @@ export function createApp({ env, store, telegram, now = () => new Date() }) {
     if (pathname === '/api/telegram/webhook' && method === 'POST') {
       return configureWebhook(await readJson(request));
     }
+    const itemAction = pathname.match(/^\/api\/content\/(\d+)\/(publish|cancel|restore)$/);
+    if (itemAction && method === 'POST') {
+      const id = Number(itemAction[1]);
+      if (itemAction[2] === 'publish') {
+        const body = (await readJson(request)) ?? {};
+        const result = await publishItem({ store, telegram, id, destinationChatId: body.destinationChatId, now });
+        return json({ ok: true, ...result });
+      }
+      return json({ ok: true, ...(await changeQueueState({ store, id, action: itemAction[2], now })) });
+    }
+    const testPost = pathname.match(/^\/api\/chats\/(-?\d+)\/test$/);
+    if (testPost && method === 'POST') {
+      return sendTestPost(Number(testPost[1]));
+    }
     return fail(404, 'not_found');
   }
 
@@ -106,6 +124,17 @@ export function createApp({ env, store, telegram, now = () => new Date() }) {
         lastErrorAt: info.last_error_date ? new Date(info.last_error_date * 1000).toISOString() : null,
       },
     });
+  }
+
+  async function sendTestPost(telegramChatId) {
+    const destination = await store.getActiveDestination(telegramChatId);
+    if (!destination) return fail(404, 'destination_not_found');
+    const message = await telegram().sendMessage(
+      destination.telegram_chat_id,
+      'CloneGRAM bağlantı testi ✅ Bot bu kanala gönderi yapabiliyor. Bu mesajı silebilirsin.',
+      { disable_notification: true },
+    );
+    return json({ ok: true, messageId: message?.message_id ?? null });
   }
 
   async function registerChat(body) {

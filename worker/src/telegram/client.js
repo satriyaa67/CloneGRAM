@@ -52,5 +52,8 @@ export function createTelegramClient({ token, fetchImpl = fetch, baseUrl = 'http
     getChatMember: (chatId, userId) => call('getChatMember', { chat_id: chatId, user_id: userId }),
     setWebhook: (options) => call('setWebhook', options),
     getWebhookInfo: () => call('getWebhookInfo'),
+    sendMessage: (chatId, text, options = {}) => call('sendMessage', { chat_id: chatId, text, ...options }),
+    copyMessage: (chatId, fromChatId, messageId, options = {}) => call('copyMessage', { chat_id: chatId, from_chat_id: fromChatId, message_id: messageId, ...options }),
+    copyMessages: (chatId, fromChatId, messageIds, options = {}) => call('copyMessages', { chat_id: chatId, from_chat_id: fromChatId, message_ids: messageIds, ...options }),
   };
 }
