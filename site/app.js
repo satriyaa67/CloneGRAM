@@ -6,6 +6,7 @@
  */
 (() => {
   const TOKEN_KEY = 'clonegram.adminToken';
+  const THEME_KEY = 'clonegram.theme';
   const REFRESH_MS = 15000;
 
   const ICONS = {
@@ -50,9 +51,19 @@
     telegram_rate_limited: 'Telegram kısa süreli sınır uyguladı. Birkaç saniye sonra tekrar dene.',
     internal_error: 'Sunucuda beklenmeyen bir hata oluştu.',
     network: 'Sunucuya ulaşılamadı. Bağlantını kontrol et.',
+    item_protected: 'Bu içerik korumalı; yayımlanamaz.',
+    item_not_publishable: 'Bu gönderi artık gönderilebilir durumda değil. Listeyi yenile.',
+    already_in_progress: 'Bu gönderi zaten gönderiliyor.',
+    source_not_active: 'Kaynak kanal artık kayıtlı değil.',
+    no_destination: 'Önce Bağlantılar\'dan bir hedef kanal ekle.',
+    destination_not_found: 'Hedef kanal bulunamadı. Bağlantılar\'ı kontrol et.',
+    item_not_found: 'Gönderi bulunamadı. Listeyi yenile.',
+    item_not_cancellable: 'Bu gönderi iptal edilemez (yayımlanmış ya da korumalı).',
+    item_not_restorable: 'Bu gönderi geri alınamaz.',
   };
 
-  const STATUS_LABEL = { received: 'Yeni', in_review: 'İncelemede', scheduled: 'Planlandı', published: 'Yayımlandı', skipped: 'Atlandı', failed: 'Hata' };
+  const STATUS_LABEL = { received: 'Bekliyor', in_review: 'İncelemede', scheduled: 'Planlandı', publishing: 'Gönderiliyor', published: 'Yayımlandı', cancelled: 'İptal edildi', skipped: 'Atlandı', failed: 'Gönderilemedi' };
+  const STATUS_PILL = { received: '', publishing: '', published: 'ok', cancelled: 'mute', skipped: 'mute', failed: 'warn' };
   const MEDIA_LABEL = { text: 'Metin', photo: 'Fotoğraf', video: 'Video', animation: 'GIF', document: 'Dosya', audio: 'Ses', voice: 'Sesli mesaj', video_note: 'Görüntülü not', sticker: 'Çıkartma' };
 
   const state = { mode: null, token: null, entered: false, page: 'overview', filter: 'all', data: {}, timer: null, apiReachable: false };
@@ -83,6 +94,22 @@
     clearTimeout(toast.t);
     toast.t = setTimeout(() => el.classList.remove('show'), 3600);
   }
+
+  // ---------- theme ----------
+  const darkQuery = typeof matchMedia === 'function' ? matchMedia('(prefers-color-scheme: dark)') : null;
+  function themePref() {
+    try { return localStorage.getItem(THEME_KEY) || 'system'; } catch { return 'system'; }
+  }
+  function applyTheme(pref) {
+    const dark = pref === 'dark' || (pref === 'system' && !!darkQuery?.matches);
+    document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
+  }
+  function setTheme(pref) {
+    try { localStorage.setItem(THEME_KEY, pref); } catch { /* storage blocked: still apply for this visit */ }
+    applyTheme(pref);
+  }
+  darkQuery?.addEventListener?.('change', () => { if (themePref() === 'system') applyTheme('system'); });
+  applyTheme(themePref());
 
   function relTime(iso) {
     if (!iso) return '';
@@ -136,6 +163,10 @@
     if (code === 'telegram_error') {
       const d = (error.body.description || '').toLowerCase();
       if (d.includes('chat not found')) return 'Telegram bu sohbeti bulamadı. Kullanıcı adını kontrol et ve botun sohbete eklendiğinden emin ol.';
+      if (d.includes('administrator rights') || d.includes('not enough rights') || d.includes('have no rights')) return 'Botun hedef kanalda gönderi yetkisi yok. Kanal > Yöneticiler > bot > "Mesaj gönder" iznini aç.';
+      if (d.includes('message to copy not found') || d.includes('message not found')) return 'Kaynak mesaj bulunamadı; kaynakta silinmiş olabilir.';
+      if (d.includes('kicked') || d.includes('not a member')) return 'Bot bu kanaldan çıkarılmış. Tekrar yönetici olarak ekle.';
+      if (d.includes("can't be copied") || d.includes('protected')) return 'Bu içerik korumalı; Telegram kopyalanmasına izin vermiyor.';
       if (d.includes('unauthorized')) return 'Bot token\'ı geçersiz görünüyor. GitHub\'daki TELEGRAM_BOT_TOKEN değerini kontrol et.';
       return `Telegram hatası: ${error.body.description || 'bilinmiyor'}`;
     }
@@ -300,7 +331,8 @@
     },
     queue: async () => {
       const q = state.filter === 'all' ? '' : `&status=${state.filter}`;
-      const [items, summary] = await Promise.all([api(`/api/content?limit=100${q}`), api('/api/summary')]);
+      const [items, summary, chats] = await Promise.all([api(`/api/content?limit=150${q}`), api('/api/summary'), api('/api/chats')]);
+      state.destinations = chats.chats.filter((c) => c.role === 'destination' && c.active !== 0);
       return { items: items.items, summary };
     },
     connections: async () => {
@@ -352,7 +384,82 @@
       : null;
   }
 
-  function itemRow(item) {
+  /** Albums arrive as one row per photo; show them as a single row. */
+  function groupItems(items) {
+    const groups = new Map();
+    for (const item of items) {
+      const key = item.media_group_id ? `${item.telegram_chat_id}:${item.media_group_id}` : `i${item.id}`;
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(item);
+    }
+    return [...groups.values()].map((list) => {
+      const rep = list.find((i) => i.text) || list[0];
+      return { ...rep, count: list.length, status: list.some((i) => i.status === 'publishing') ? 'publishing' : rep.status };
+    });
+  }
+
+  function itemEntry(item, withActions) {
+    const holder = h('div', {});
+    const row = itemRow(item, withActions ? queueActions(item, holder) : null);
+    return h('div', { class: 'item-wrap' }, row, holder);
+  }
+
+  function queueActions(item, holder) {
+    const box = h('div', { class: 'row-actions' });
+    if (item.status === 'received' || item.status === 'failed') {
+      box.append(
+        h('button', { class: 'btn primary sm', type: 'button', onclick: (e) => startPublish(item, holder, e.currentTarget) }, item.status === 'failed' ? 'Tekrar dene' : 'Hedefe gönder'),
+        h('button', { class: 'btn ghost sm', type: 'button', onclick: (e) => queueState(item, 'cancel', holder, e.currentTarget) }, 'İptal'));
+    } else if (item.status === 'cancelled') {
+      box.append(h('button', { class: 'btn ghost sm', type: 'button', onclick: (e) => queueState(item, 'restore', holder, e.currentTarget) }, 'Geri al'));
+    }
+    return box.childNodes.length ? box : null;
+  }
+
+  function startPublish(item, holder, button) {
+    const destinations = state.destinations || [];
+    if (destinations.length === 0) {
+      holder.replaceChildren(h('div', { class: 'chooser' }, h('span', {}, ERRORS.no_destination), h('button', { class: 'btn sm', type: 'button', onclick: () => navigate('connections') }, 'Bağlantılar')));
+      return;
+    }
+    if (destinations.length === 1) return publish(item, destinations[0].telegram_chat_id, holder, button);
+    holder.replaceChildren(h('div', { class: 'chooser' },
+      h('span', {}, 'Hangi kanala?'),
+      destinations.map((d) => h('button', { class: 'btn sm', type: 'button', onclick: (e) => publish(item, d.telegram_chat_id, holder, e.currentTarget) }, d.title)),
+      h('button', { class: 'btn ghost sm', type: 'button', onclick: () => holder.replaceChildren() }, 'Vazgeç')));
+  }
+
+  async function publish(item, destinationChatId, holder, button) {
+    if (state.mode === 'demo') { toast('Örnek veri modunda gönderim yapılmaz.'); return; }
+    const label = button.textContent;
+    button.disabled = true;
+    button.textContent = 'Gönderiliyor…';
+    try {
+      const res = await api(`/api/content/${item.id}/publish`, { method: 'POST', body: { destinationChatId } });
+      toast(`"${res.destination.title}" kanalına gönderildi.`);
+      refresh(false, true);
+    } catch (error) {
+      button.disabled = false;
+      button.textContent = label;
+      holder.replaceChildren(h('ul', { class: 'reasons', role: 'alert' }, h('li', {}, errorText(error))));
+      refresh(false, true);
+    }
+  }
+
+  async function queueState(item, action, holder, button) {
+    if (state.mode === 'demo') { toast('Örnek veri modunda değişiklik yapılmaz.'); return; }
+    button.disabled = true;
+    try {
+      await api(`/api/content/${item.id}/${action}`, { method: 'POST' });
+      toast(action === 'cancel' ? 'Gönderi iptal edildi.' : 'Gönderi kuyruğa geri alındı.');
+      refresh(false, true);
+    } catch (error) {
+      button.disabled = false;
+      holder.replaceChildren(h('ul', { class: 'reasons', role: 'alert' }, h('li', {}, errorText(error))));
+    }
+  }
+
+  function itemRow(item, actions) {
     const skipped = item.status === 'skipped';
     const kindName = skipped ? 'lock' : item.media_type === 'text' ? 'text' : item.media_type === 'photo' ? 'photo' : ['video', 'animation', 'video_note'].includes(item.media_type) ? 'video' : 'file';
     const kindClass = skipped ? 'lock' : kindName === 'text' ? 'text' : kindName === 'photo' ? 'photo' : '';
@@ -365,9 +472,13 @@
         h('div', { class: 'row-meta' },
           h('span', {}, item.source_title ? chatLabel(item.source_title, item.source_username) : 'Kaynak'),
           h('span', {}, MEDIA_LABEL[item.media_type] || item.media_type),
-          item.media_group_id ? h('span', {}, 'Albüm') : null,
-          h('span', { title: new Date(item.received_at).toLocaleString('tr-TR') }, relTime(item.received_at)))),
-      h('span', { class: `pill ${skipped ? 'mute' : item.status === 'received' ? '' : 'ok'}` }, STATUS_LABEL[item.status] || item.status));
+          item.media_group_id ? h('span', {}, item.count > 1 ? `Albüm · ${item.count} öğe` : 'Albüm') : null,
+          h('span', { title: new Date(item.received_at).toLocaleString('tr-TR') }, relTime(item.received_at)),
+          item.status === 'published' && item.destination_title ? h('span', {}, `→ ${item.destination_title} · ${relTime(item.published_at)}`) : null,
+          item.status === 'failed' && item.last_error ? h('span', { class: 'row-error' }, errorText({ body: { error: 'telegram_error', description: item.last_error } })) : null)),
+      h('div', { class: 'row-side' },
+        actions,
+        h('span', { class: `pill ${STATUS_PILL[item.status] ?? ''}` }, STATUS_LABEL[item.status] || item.status)));
   }
 
   function setupSteps(status, summary, hasItems) {
@@ -378,7 +489,7 @@
       [hookOk, 'Telegram bildirimleri açık', hookOk ? (recentError(status.webhook) ? `Son hata (${relTime(status.webhook.lastErrorAt)}): ${status.webhook.lastError}` : 'Yeni gönderiler anında buraya düşer.') : 'Webhook kayıtlı değil. Dağıtım iş akışını yeniden çalıştır.'],
       [(summary.chats.source || 0) > 0, 'Kaynak kanal ekli', 'Botu kaynak kanala ekle, sonra Bağlantılar\'dan kaynak olarak kaydet.'],
       [(summary.chats.destination || 0) > 0, 'Hedef kanal ekli', 'Botu hedef kanala mesaj gönderme yetkili yönetici olarak ekle ve kaydet.'],
-      [hasItems, 'İlk içerik geldi', 'Kaynak kanalda yeni bir gönderi paylaş; birkaç saniye içinde kuyrukta görünür.'],
+      [hasItems, 'İlk içerik geldi', 'Kaynak kanalda yeni bir gönderi paylaş; birkaç saniye içinde kuyrukta görünür. Sonra kuyrukta "Hedefe gönder"e bas.'],
     ];
     const done = steps.filter(([ok]) => ok).length;
     return h('section', {},
@@ -394,31 +505,33 @@
       const c = summary.content;
       const total = Object.values(c).reduce((a, b) => a + b, 0);
       return [
-        pageHead(new Date().toLocaleDateString('tr-TR', { weekday: 'long', day: 'numeric', month: 'long' }).toLocaleUpperCase('tr-TR'), 'Yayın akışın, kontrol altında.', 'Kaynaklarından gelen içerik burada toplanır. Yayımlama adımı bir sonraki fazda eklenecek.'),
+        pageHead(new Date().toLocaleDateString('tr-TR', { weekday: 'long', day: 'numeric', month: 'long' }).toLocaleUpperCase('tr-TR'), 'Yayın akışın, kontrol altında.', 'Kaynaklarından gelen içerik kuyrukta toplanır; hazır olanı tek tıkla hedef kanalına gönderirsin.'),
         demoNote(),
         status?.error ? h('div', { class: 'note warn' }, icon('info'), h('span', {}, errorText(status.error))) : null,
         h('div', { class: 'statline' },
-          h('span', {}, h('b', {}, String(c.received || 0)), 'yeni içerik'),
+          h('span', {}, h('b', {}, String(c.received || 0)), 'bekleyen'),
+          h('span', {}, h('b', {}, String(c.published || 0)), 'yayımlanan'),
           h('span', {}, h('b', {}, String(c.skipped || 0)), 'korumalı, atlandı'),
           h('span', {}, h('b', {}, String(summary.chats.source || 0)), 'kaynak'),
           h('span', {}, h('b', {}, String(summary.chats.destination || 0)), 'hedef')),
         setupSteps(status, summary, total > 0),
         h('section', {},
           h('div', { class: 'sec-head' }, h('h2', {}, 'Son gelenler'), items.length ? h('button', { class: 'btn ghost', type: 'button', onclick: () => navigate('queue') }, 'Tüm kuyruk') : null),
-          items.length ? h('div', { class: 'rows' }, items.map(itemRow))
+          items.length ? h('div', { class: 'rows' }, groupItems(items).map((i) => itemEntry(i, false)))
             : h('div', { class: 'rows' }, h('div', { class: 'empty' }, h('b', {}, 'Henüz içerik yok'), h('p', {}, 'Kaynak kanal ekleyip orada yeni bir gönderi paylaştığında burada görünecek. Bot, eklendiği andan sonraki gönderileri alır.')))),
       ];
     },
 
     queue({ items, summary }) {
       const c = summary.content;
-      const filters = [['all', 'Tümü', Object.values(c).reduce((a, b) => a + b, 0)], ['received', 'Yeni', c.received || 0], ['skipped', 'Atlanan', c.skipped || 0]];
+      const filters = [['all', 'Tümü', Object.values(c).reduce((a, b) => a + b, 0)], ['received', 'Bekleyen', c.received || 0], ['published', 'Yayımlanan', c.published || 0], ['cancelled', 'İptal', c.cancelled || 0], ['skipped', 'Atlanan', c.skipped || 0]];
+      if (c.failed) filters.splice(2, 0, ['failed', 'Gönderilemedi', c.failed]);
       return [
-        pageHead('YAYIN STÜDYOSU', 'İçerik kuyruğu', 'Kaynak kanallarından gelen gönderiler. Düzenleme, filigran ve onay Faz 2\'de burada olacak.'),
+        pageHead('YAYIN STÜDYOSU', 'İçerik kuyruğu', 'Hazır olanı "Hedefe gönder" ile yayımla, istemediğini iptal et. Metin düzenleme ve filigran Faz 2\'de burada olacak.'),
         demoNote(),
         h('div', { class: 'filters', role: 'group', 'aria-label': 'Duruma göre filtrele' }, filters.map(([id, label, n]) =>
           h('button', { class: 'chip', type: 'button', 'aria-pressed': String(state.filter === id), onclick: () => { state.filter = id; refresh(false); } }, `${label} · ${n}`))),
-        items.length ? h('div', { class: 'rows' }, items.map(itemRow))
+        items.length ? h('div', { class: 'rows' }, groupItems(items).map((i) => itemEntry(i, true)))
           : h('div', { class: 'rows' }, h('div', { class: 'empty' }, h('b', {}, state.filter === 'skipped' ? 'Atlanan içerik yok' : 'Kuyruk boş'), h('p', {}, state.filter === 'skipped' ? 'Korumalı içerik gelirse burada, içeriği saklanmadan listelenir.' : 'Kaynak kanalda paylaşılan yeni gönderiler burada görünür.'))),
       ];
     },
@@ -432,7 +545,9 @@
         ? h('div', { class: 'rows' }, list.map((c) => h('div', { class: 'row' },
           h('div', { class: `kind ${role === 'source' ? '' : 'photo'}` }, icon('connections')),
           h('div', {}, h('div', { class: 'row-title' }, c.title), h('div', { class: 'row-meta' }, c.username ? h('span', {}, `@${c.username}`) : h('span', { class: 'num' }, String(c.telegram_chat_id)), h('span', {}, c.chat_type === 'channel' ? 'Kanal' : 'Grup'), h('span', {}, `kontrol: ${relTime(c.last_checked_at)}`))),
-          h('span', { class: 'pill ok' }, role === 'source' ? 'Kaynak' : 'Hedef'))))
+          h('div', { class: 'row-side' },
+            role === 'destination' ? h('button', { class: 'btn sm', type: 'button', onclick: (e) => testPost(c, e.currentTarget) }, 'Test mesajı gönder') : null,
+            h('span', { class: 'pill ok' }, role === 'source' ? 'Kaynak' : 'Hedef')))))
         : h('div', { class: 'rows' }, h('div', { class: 'empty' }, h('b', {}, role === 'source' ? 'Kaynak yok' : 'Hedef yok'), h('p', {}, role === 'source' ? 'Aşağıdan ya da "Botun eklendiği sohbetler" listesinden ekle.' : 'Botu hedef kanala yönetici olarak ekleyip kaydet.')));
 
       return [
@@ -473,12 +588,24 @@
             row('Webhook', s ? h('span', { class: `pill ${s.webhook.active ? 'ok' : 'warn'}` }, s.webhook.active ? 'Aktif' : 'Kayıtlı değil') : '—'),
             row('Bekleyen güncelleme', s ? h('span', { class: 'num' }, String(s.webhook.pendingUpdates)) : '—'),
             row('Son webhook hatası', s ? (s.webhook.lastError ? `${s.webhook.lastError} (${relTime(s.webhook.lastErrorAt)})` : 'Yok') : '—'))),
+        h('section', {}, h('div', { class: 'sec-head' }, h('h2', {}, 'Görünüm')), themeControl()),
         h('section', {}, h('div', { class: 'sec-head' }, h('h2', {}, 'Oturum')),
           h('dl', { class: 'kv' }, row('Mod', state.mode === 'demo' ? 'Örnek veri' : 'Canlı'), row('Anahtar', 'Yalnızca bu tarayıcı sekmesinde tutulur'))),
         h('div', {}, h('button', { class: 'btn', type: 'button', onclick: () => logout() }, 'Çıkış yap')),
       ];
     },
   };
+
+  function themeControl() {
+    const options = [['light', 'Açık'], ['dark', 'Koyu'], ['system', 'Sistem']];
+    const group = h('div', { class: 'segmented', role: 'group', 'aria-label': 'Tema' });
+    const sync = () => group.querySelectorAll('button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.value === themePref())));
+    for (const [value, label] of options) {
+      group.append(h('button', { type: 'button', 'data-value': value, onclick: () => { setTheme(value); sync(); } }, label));
+    }
+    sync();
+    return h('dl', { class: 'kv' }, h('dt', {}, 'Tema'), h('dd', {}, group));
+  }
 
   function discoveredSection(pending) {
     return h('section', {},
@@ -502,6 +629,19 @@
             holder);
         }))
         : h('div', { class: 'rows' }, h('div', { class: 'empty' }, h('b', {}, 'Bekleyen sohbet yok'), h('p', {}, 'Telegram\'da kanal ayarlarından botu yönetici olarak ekle. Birkaç saniye içinde burada görünür.'))));
+  }
+
+  async function testPost(chat, button) {
+    if (state.mode === 'demo') { toast('Örnek veri modunda gönderim yapılmaz.'); return; }
+    button.disabled = true;
+    try {
+      await api(`/api/chats/${chat.telegram_chat_id}/test`, { method: 'POST' });
+      toast(`"${chat.title}" kanalına sessiz bir test mesajı gönderildi.`);
+    } catch (error) {
+      toast(errorText(error));
+    } finally {
+      button.disabled = false;
+    }
   }
 
   function confirmSource(holder, chatId, title) {
@@ -562,12 +702,13 @@
     const items = [
       { id: 3, media_type: 'video', text: 'Haftalık ilham: tasarımın küçük detayları', status: 'received', received_at: iso(2), source_title: 'Studio Notes', source_username: 'studio_notes', media_group_id: null },
       { id: 2, media_type: 'photo', text: 'Yeni koleksiyondan bir kare', status: 'received', received_at: iso(9), source_title: 'Studio Notes', source_username: 'studio_notes', media_group_id: 'a1' },
+      { id: 4, media_type: 'text', text: 'Hafta sonu seçkisi yayında', status: 'published', received_at: iso(30), published_at: iso(25), destination_title: 'CloneGRAM Yayın', source_title: 'Studio Notes', source_username: 'studio_notes', media_group_id: null },
       { id: 1, media_type: 'text', text: null, status: 'skipped', received_at: iso(40), source_title: 'Kilitli Kanal', source_username: null, media_group_id: null },
     ];
     if (options.method === 'POST') return Promise.reject(new ApiError(400, { error: 'demo' }));
     const routes = {
       '/api/status': { ok: true, bot: { username: 'clonegram_bot', canReadAllGroupMessages: false }, webhook: { active: true, pendingUpdates: 0, lastError: null, lastErrorAt: null } },
-      '/api/summary': { ok: true, content: { received: 2, skipped: 1 }, chats: { source: 1, destination: 1 } },
+      '/api/summary': { ok: true, content: { received: 2, published: 1, skipped: 1 }, chats: { source: 1, destination: 1 } },
       '/api/chats': { ok: true, chats: [
         { telegram_chat_id: -1001, role: 'source', title: 'Studio Notes', username: 'studio_notes', chat_type: 'channel', last_checked_at: iso(60) },
         { telegram_chat_id: -1002, role: 'destination', title: 'CloneGRAM Yayın', username: 'clonegram_yayin', chat_type: 'channel', last_checked_at: iso(58) }] },
