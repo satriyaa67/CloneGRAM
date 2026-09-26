@@ -23,6 +23,10 @@ export function fakeTelegram({ me = BOT, chats = {}, members = {}, calls = [] } 
     async getChatMember(chatId, userId) { calls.push(['getChatMember', chatId, userId]); return members[chatId] ?? { status: 'left' }; },
     async setWebhook(options) { calls.push(['setWebhook', options]); return true; },
     webhookInfo: { url: 'https://api.test/telegram/webhook', pending_update_count: 0 },
+    nextMessageId: 500,
+    async sendMessage(chatId, text, options) { calls.push(['sendMessage', chatId, text, options]); return { message_id: this.nextMessageId++ }; },
+    async copyMessage(chatId, fromChatId, messageId) { calls.push(['copyMessage', chatId, fromChatId, messageId]); return { message_id: this.nextMessageId++ }; },
+    async copyMessages(chatId, fromChatId, messageIds) { calls.push(['copyMessages', chatId, fromChatId, messageIds]); return messageIds.map(() => ({ message_id: this.nextMessageId++ })); },
     async getWebhookInfo() { calls.push(['getWebhookInfo']); return this.webhookInfo; },
   };
 }
