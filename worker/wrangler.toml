@@ -1,0 +1,19 @@
+name = "clonegram-api"
+main = "src/index.js"
+compatibility_date = "2026-09-26"
+
+[vars]
+# Dashboard origin allowed to call the admin API from the browser.
+ALLOWED_ORIGIN = "https://clonegram.pages.dev"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "clonegram"
+# Create with: npx wrangler@4 d1 create clonegram  (then paste the id here)
+database_id = "REPLACE_WITH_D1_DATABASE_ID"
+migrations_dir = "migrations"
+
+# Secrets (never commit values):
+#   npx wrangler@4 secret put TELEGRAM_BOT_TOKEN
+#   npx wrangler@4 secret put TELEGRAM_WEBHOOK_SECRET   (A-Z a-z 0-9 _ - , 1-256 chars)
+#   npx wrangler@4 secret put ADMIN_API_TOKEN

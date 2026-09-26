@@ -1,0 +1,151 @@
+import { json, fail, readJson } from './lib/http.js';
+import { safeEqual, bearerToken } from './lib/security.js';
+import { processUpdate } from './intake/service.js';
+import { checkChatAccess } from './telegram/permissions.js';
+import { TelegramApiError, TelegramRateLimitError } from './telegram/client.js';
+
+const WEBHOOK_SECRET_PATTERN = /^[A-Za-z0-9_-]{1,256}$/;
+const ALLOWED_UPDATES = ['channel_post', 'message'];
+
+/**
+ * Builds the request handler. Dependencies are injected so every route is testable:
+ *   env:       { TELEGRAM_WEBHOOK_SECRET, ADMIN_API_TOKEN, ALLOWED_ORIGIN }
+ *   store:     storage adapter (see storage/d1.js)
+ *   telegram:  () => Bot API client (lazy, so routes that don't need it work without a token)
+ */
+export function createApp({ env, store, telegram, now = () => new Date() }) {
+  return async function handle(request) {
+    const url = new URL(request.url);
+    const cors = corsHeaders(request, env);
+
+    if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: cors });
+
+    try {
+      if (url.pathname === '/health' && request.method === 'GET') {
+        return json({ ok: true, service: 'clonegram-api' }, 200, cors);
+      }
+      if (url.pathname === '/telegram/webhook' && request.method === 'POST') {
+        return await telegramWebhook(request);
+      }
+      if (url.pathname.startsWith('/api/')) {
+        const denied = authorizeAdmin(request, env);
+        if (denied) return withHeaders(denied, cors);
+        return withHeaders(await adminRoute(request, url), cors);
+      }
+      return fail(404, 'not_found', {}, cors);
+    } catch (error) {
+      if (error instanceof TelegramRateLimitError) {
+        return fail(503, 'telegram_rate_limited', { retryAfter: error.retryAfter }, { ...cors, 'retry-after': String(error.retryAfter) });
+      }
+      if (error instanceof TelegramApiError) {
+        return fail(502, 'telegram_error', { method: error.method, description: error.description }, cors);
+      }
+      console.error('Unhandled error', error);
+      return fail(500, 'internal_error', {}, cors);
+    }
+  };
+
+  async function telegramWebhook(request) {
+    const expected = env.TELEGRAM_WEBHOOK_SECRET;
+    if (!expected) return fail(503, 'webhook_not_configured');
+    if (!safeEqual(request.headers.get('x-telegram-bot-api-secret-token') ?? '', expected)) {
+      return fail(401, 'invalid_webhook_secret');
+    }
+    const update = await readJson(request);
+    if (update === undefined) return fail(400, 'invalid_json');
+    // Errors propagate as 500 so Telegram retries; inserts are idempotent.
+    const result = await processUpdate(update, { store, now });
+    return json({ ok: true, result: result.status });
+  }
+
+  async function adminRoute(request, url) {
+    const { pathname } = url;
+    const method = request.method;
+
+    if (pathname === '/api/chats' && method === 'GET') {
+      return json({ ok: true, chats: await store.listChats() });
+    }
+    if (pathname === '/api/chats' && method === 'POST') {
+      return registerChat(await readJson(request));
+    }
+    if (pathname === '/api/content' && method === 'GET') {
+      const status = url.searchParams.get('status') ?? undefined;
+      try {
+        const items = await store.listContentItems({ status, limit: url.searchParams.get('limit') ?? 50 });
+        return json({ ok: true, items });
+      } catch (error) {
+        if (error instanceof RangeError) return fail(400, 'invalid_status');
+        throw error;
+      }
+    }
+    if (pathname === '/api/telegram/webhook' && method === 'POST') {
+      return configureWebhook(await readJson(request));
+    }
+    return fail(404, 'not_found');
+  }
+
+  async function registerChat(body) {
+    if (!body || typeof body !== 'object') return fail(400, 'invalid_json');
+    const { chatId, role, rightsConfirmed } = body;
+    if (!isChatReference(chatId)) return fail(400, 'invalid_chat_id');
+    if (role !== 'source' && role !== 'destination') return fail(400, 'invalid_role');
+    if (role === 'source' && rightsConfirmed !== true) return fail(400, 'rights_confirmation_required');
+
+    const access = await checkChatAccess(telegram(), chatId, role);
+    if (!access.ok) return fail(422, 'chat_not_eligible', { reasons: access.reasons, chat: access.chat });
+
+    const chat = await store.upsertChat({
+      telegramChatId: access.chat.telegramChatId,
+      role,
+      title: access.chat.title,
+      type: access.chat.type,
+      username: access.chat.username,
+      protectedContent: access.chat.protectedContent,
+      rightsConfirmed: role === 'source' ? true : false,
+      checkedAt: now().toISOString(),
+    });
+    return json({ ok: true, chat }, 201);
+  }
+
+  async function configureWebhook(body) {
+    const secret = env.TELEGRAM_WEBHOOK_SECRET;
+    if (!secret || !WEBHOOK_SECRET_PATTERN.test(secret)) return fail(503, 'webhook_secret_invalid_or_missing');
+    let target;
+    try {
+      target = new URL(body?.url);
+    } catch {
+      return fail(400, 'invalid_url');
+    }
+    if (target.protocol !== 'https:') return fail(400, 'https_required');
+    if (target.pathname !== '/telegram/webhook') return fail(400, 'webhook_path_must_be_/telegram/webhook');
+    await telegram().setWebhook({ url: target.toString(), secret_token: secret, allowed_updates: ALLOWED_UPDATES });
+    return json({ ok: true, url: target.toString(), allowedUpdates: ALLOWED_UPDATES });
+  }
+}
+
+function authorizeAdmin(request, env) {
+  if (!env.ADMIN_API_TOKEN) return fail(503, 'admin_api_not_configured');
+  if (!safeEqual(bearerToken(request) ?? '', env.ADMIN_API_TOKEN)) return fail(401, 'unauthorized');
+  return null;
+}
+
+function isChatReference(value) {
+  return (Number.isSafeInteger(value) && value !== 0) || (typeof value === 'string' && /^@[A-Za-z][A-Za-z0-9_]{3,31}$/.test(value));
+}
+
+function corsHeaders(request, env) {
+  const origin = request.headers.get('origin');
+  if (!origin || !env.ALLOWED_ORIGIN || origin !== env.ALLOWED_ORIGIN) return {};
+  return {
+    'access-control-allow-origin': origin,
+    'access-control-allow-methods': 'GET, POST, OPTIONS',
+    'access-control-allow-headers': 'authorization, content-type',
+    'access-control-max-age': '600',
+    vary: 'origin',
+  };
+}
+
+function withHeaders(response, headers) {
+  for (const [key, value] of Object.entries(headers)) response.headers.set(key, value);
+  return response;
+}
