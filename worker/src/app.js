@@ -5,7 +5,7 @@ import { checkChatAccess } from './telegram/permissions.js';
 import { TelegramApiError, TelegramRateLimitError } from './telegram/client.js';
 
 const WEBHOOK_SECRET_PATTERN = /^[A-Za-z0-9_-]{1,256}$/;
-const ALLOWED_UPDATES = ['channel_post', 'message'];
+const ALLOWED_UPDATES = ['channel_post', 'message', 'my_chat_member'];
 
 /**
  * Builds the request handler. Dependencies are injected so every route is testable:
@@ -62,6 +62,15 @@ export function createApp({ env, store, telegram, now = () => new Date() }) {
     const { pathname } = url;
     const method = request.method;
 
+    if (pathname === '/api/status' && method === 'GET') {
+      return status();
+    }
+    if (pathname === '/api/summary' && method === 'GET') {
+      return json({ ok: true, ...(await store.summary()) });
+    }
+    if (pathname === '/api/discovered' && method === 'GET') {
+      return json({ ok: true, chats: await store.listDiscoveredChats() });
+    }
     if (pathname === '/api/chats' && method === 'GET') {
       return json({ ok: true, chats: await store.listChats() });
     }
@@ -82,6 +91,21 @@ export function createApp({ env, store, telegram, now = () => new Date() }) {
       return configureWebhook(await readJson(request));
     }
     return fail(404, 'not_found');
+  }
+
+  async function status() {
+    const client = telegram();
+    const [me, info] = await Promise.all([client.getMe(), client.getWebhookInfo()]);
+    return json({
+      ok: true,
+      bot: { username: me.username ?? null, canReadAllGroupMessages: me.can_read_all_group_messages === true },
+      webhook: {
+        active: typeof info.url === 'string' && info.url.length > 0,
+        pendingUpdates: info.pending_update_count ?? 0,
+        lastError: info.last_error_message ?? null,
+        lastErrorAt: info.last_error_date ? new Date(info.last_error_date * 1000).toISOString() : null,
+      },
+    });
   }
 
   async function registerChat(body) {

@@ -9,6 +9,19 @@ export async function processUpdate(update, { store, now = () => new Date(), wor
   const post = normalizeUpdate(update);
   if (post.kind === 'invalid') return { status: 'invalid', reason: post.reason };
   if (post.kind === 'ignored') return { status: 'ignored', reason: post.reason };
+  if (post.kind === 'membership') {
+    await store.upsertDiscoveredChat({
+      workspaceId,
+      telegramChatId: post.chatId,
+      title: post.title,
+      type: post.chatType,
+      username: post.username,
+      botStatus: post.botStatus,
+      canPost: post.canPost,
+      updatedAt: now().toISOString(),
+    });
+    return { status: 'membership_recorded' };
+  }
 
   const source = await store.getActiveSource(post.chatId, workspaceId);
   if (!source) return { status: 'ignored', reason: 'unregistered_source' };

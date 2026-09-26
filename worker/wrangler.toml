@@ -1,19 +1,24 @@
-name = "clonegram-api"
+name = "clonegram"
 main = "src/index.js"
-compatibility_date = "2026-09-26"
+compatibility_date = "2026-09-01"
+workers_dev = true
+
+# The dashboard in ../site is served by this same Worker (same origin, no CORS needed).
+# Files that exist are served directly; everything else (/api/*, /telegram/webhook, /health) runs the Worker.
+[assets]
+directory = "../site"
 
 [vars]
-# Dashboard origin allowed to call the admin API from the browser.
-ALLOWED_ORIGIN = "https://clonegram.pages.dev"
+# Optional extra browser origin allowed to call the admin API (leave empty for same-origin only).
+ALLOWED_ORIGIN = ""
 
 [[d1_databases]]
 binding = "DB"
 database_name = "clonegram"
-# Create with: npx wrangler@4 d1 create clonegram  (then paste the id here)
+# The deploy workflow finds or creates the database and fills this in at deploy time.
+# For manual deploys: npx wrangler@4 d1 create clonegram  (then paste the id here)
 database_id = "REPLACE_WITH_D1_DATABASE_ID"
 migrations_dir = "migrations"
 
-# Secrets (never commit values):
-#   npx wrangler@4 secret put TELEGRAM_BOT_TOKEN
-#   npx wrangler@4 secret put TELEGRAM_WEBHOOK_SECRET   (A-Z a-z 0-9 _ - , 1-256 chars)
-#   npx wrangler@4 secret put ADMIN_API_TOKEN
+# Secrets (never commit values). The deploy workflow sets all three:
+#   TELEGRAM_BOT_TOKEN, ADMIN_API_TOKEN (from GitHub secrets), TELEGRAM_WEBHOOK_SECRET (generated per deploy)

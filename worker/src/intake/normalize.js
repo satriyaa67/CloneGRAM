@@ -6,6 +6,7 @@ export function normalizeUpdate(update) {
     return { kind: 'invalid', reason: 'missing_update_id' };
   }
   const updateId = update.update_id;
+  if (update.my_chat_member) return normalizeMembership(updateId, update.my_chat_member);
   const message = update.channel_post ?? update.message;
   if (!message) {
     const type = Object.keys(update).find((key) => key !== 'update_id') ?? 'empty';
@@ -39,4 +40,20 @@ function fileIdOf(message, mediaType) {
     return Array.isArray(sizes) && sizes.length > 0 ? sizes[sizes.length - 1].file_id ?? null : null;
   }
   return message[mediaType]?.file_id ?? null;
+}
+
+function normalizeMembership(updateId, change) {
+  const chat = change.chat ?? {};
+  if (!Number.isSafeInteger(chat.id) || chat.type === 'private') return { kind: 'ignored', updateId, reason: 'private_chat' };
+  const member = change.new_chat_member ?? {};
+  return {
+    kind: 'membership',
+    updateId,
+    chatId: chat.id,
+    chatType: chat.type,
+    title: chat.title ?? chat.username ?? String(chat.id),
+    username: chat.username ?? null,
+    botStatus: typeof member.status === 'string' ? member.status : 'unknown',
+    canPost: typeof member.can_post_messages === 'boolean' ? member.can_post_messages : null,
+  };
 }
