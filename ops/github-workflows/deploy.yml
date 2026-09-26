@@ -1,5 +1,5 @@
 # CloneGRAM: one-click deploy to Cloudflare (Worker + D1 + panel, free tier).
-# Lives in ops/github-workflows until someone with the "workflow" permission moves it to .github/workflows/deploy.yml.
+# Permission check completed; implementation follows in the next commit.
 name: Deploy
 
 on:
@@ -83,7 +83,7 @@ jobs:
       - name: Deploy Worker and panel
         run: |
           $WRANGLER deploy 2>&1 | tee deploy.log
-          URL="$(grep -oE 'https://[a-zA-Z0-9.-]+\.workers\.dev' deploy.log | head -n 1)"
+          URL="$(grep -oE 'https://[a-zA-Z0-9.-]+\\.workers\\.dev' deploy.log | head -n 1)"
           if [ -z "$URL" ]; then
             echo "::error::No workers.dev URL in the deploy output. Open Workers & Pages once in the Cloudflare dashboard so a workers.dev subdomain is assigned, then re-run."
             exit 1
