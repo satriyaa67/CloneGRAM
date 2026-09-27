@@ -1,6 +1,6 @@
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { createApp } from '../src/app.js';
+import { createApp, deriveWebhookSecret } from '../src/app.js';
 import { createD1Store } from '../src/storage/d1.js';
 import { createTestD1 } from './helpers/d1.js';
 import { channelPost, fakeTelegram, membershipUpdate } from './helpers/fixtures.js';
@@ -31,7 +31,7 @@ test('health is public and leaks no configuration', async () => {
 test('webhook rejects a wrong or missing secret', async () => {
   assert.equal((await app(hook(channelPost(), 'nope'))).status, 401);
   assert.equal((await app(hook(channelPost(), ''))).status, 401);
-  const unconfigured = createApp({ env: { ...env, TELEGRAM_WEBHOOK_SECRET: '' }, store, telegram: () => telegram });
+  const unconfigured = createApp({ env: { ...env, TELEGRAM_WEBHOOK_SECRET: '', ADMIN_API_TOKEN: '' }, store, telegram: () => telegram });
   assert.equal((await unconfigured(hook(channelPost()))).status, 503);
 });
 
@@ -91,14 +91,16 @@ test('input validation on chat registration and queue filters', async () => {
   assert.equal((await app(admin('/api/content?status=drop'))).status, 400);
 });
 
-test('webhook setup enforces https, path and a valid secret', async () => {
+test('webhook setup enforces https, path and registers the stable secret', async () => {
   assert.equal((await app(admin('/api/telegram/webhook', { method: 'POST', body: JSON.stringify({ url: 'http://api.test/telegram/webhook' }) }))).status, 400);
   assert.equal((await app(admin('/api/telegram/webhook', { method: 'POST', body: JSON.stringify({ url: 'https://api.test/other' }) }))).status, 400);
   const ok = await app(admin('/api/telegram/webhook', { method: 'POST', body: JSON.stringify({ url: 'https://api.test/telegram/webhook' }) }));
   assert.equal(ok.status, 200);
   const [, options] = telegram.calls.find(([name]) => name === 'setWebhook');
-  assert.equal(options.secret_token, env.TELEGRAM_WEBHOOK_SECRET);
+  assert.equal(options.secret_token, await deriveWebhookSecret(env.ADMIN_API_TOKEN));
+  assert.notEqual(options.secret_token, env.ADMIN_API_TOKEN, 'the admin token itself is never sent to Telegram');
   assert.deepEqual(options.allowed_updates, ['channel_post', 'message', 'my_chat_member']);
+  assert.equal(options.drop_pending_updates, undefined, 'undelivered posts are kept for retry');
 });
 
 test('Telegram rate limits become 503 with Retry-After', async () => {

@@ -3,18 +3,40 @@ import { safeEqual, bearerToken } from './lib/security.js';
 import { processUpdate } from './intake/service.js';
 import { checkChatAccess } from './telegram/permissions.js';
 import { TelegramApiError, TelegramRateLimitError } from './telegram/client.js';
-import { publishItem, changeQueueState, PublishError } from './publish/service.js';
+import { publishItem, changeQueueState, deleteQueueItem, PublishError } from './publish/service.js';
 
 const WEBHOOK_SECRET_PATTERN = /^[A-Za-z0-9_-]{1,256}$/;
 const ALLOWED_UPDATES = ['channel_post', 'message', 'my_chat_member'];
+const encoder = new TextEncoder();
+
+/**
+ * Telegram webhook secret derived from ADMIN_API_TOKEN (SHA-256, hex).
+ * Every Worker version computes the same value, so a deploy can never leave Telegram
+ * holding a secret the running version does not know. A per-deploy random secret did
+ * exactly that (Telegram was registered by one version, deliveries hit another) and
+ * every update came back "401 Unauthorized".
+ */
+export async function deriveWebhookSecret(adminToken) {
+  if (typeof adminToken !== 'string' || adminToken.length === 0) return null;
+  const digest = await crypto.subtle.digest('SHA-256', encoder.encode(`clonegram-webhook:${adminToken}`));
+  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
 
 /**
  * Builds the request handler. Dependencies are injected so every route is testable:
- *   env:       { TELEGRAM_WEBHOOK_SECRET, ADMIN_API_TOKEN, ALLOWED_ORIGIN }
+ *   env:       { ADMIN_API_TOKEN, TELEGRAM_WEBHOOK_SECRET (legacy, still accepted), ALLOWED_ORIGIN }
  *   store:     storage adapter (see storage/d1.js)
  *   telegram:  () => Bot API client (lazy, so routes that don't need it work without a token)
  */
 export function createApp({ env, store, telegram, now = () => new Date() }) {
+  let derivedSecret;
+  const stableSecret = () => (derivedSecret ??= deriveWebhookSecret(env.ADMIN_API_TOKEN));
+
+  /** Secrets Telegram may present: the stable derived one, plus the legacy per-deploy secret if set. */
+  async function acceptedWebhookSecrets() {
+    return [await stableSecret(), env.TELEGRAM_WEBHOOK_SECRET].filter((s) => typeof s === 'string' && s.length > 0);
+  }
+
   return async function handle(request) {
     const url = new URL(request.url);
     const cors = corsHeaders(request, env);
@@ -50,9 +72,10 @@ export function createApp({ env, store, telegram, now = () => new Date() }) {
   };
 
   async function telegramWebhook(request) {
-    const expected = env.TELEGRAM_WEBHOOK_SECRET;
-    if (!expected) return fail(503, 'webhook_not_configured');
-    if (!safeEqual(request.headers.get('x-telegram-bot-api-secret-token') ?? '', expected)) {
+    const accepted = await acceptedWebhookSecrets();
+    if (accepted.length === 0) return fail(503, 'webhook_not_configured');
+    const presented = request.headers.get('x-telegram-bot-api-secret-token') ?? '';
+    if (!accepted.some((secret) => safeEqual(presented, secret))) {
       return fail(401, 'invalid_webhook_secret');
     }
     const update = await readJson(request);
@@ -94,7 +117,7 @@ export function createApp({ env, store, telegram, now = () => new Date() }) {
     if (pathname === '/api/telegram/webhook' && method === 'POST') {
       return configureWebhook(await readJson(request));
     }
-    const itemAction = pathname.match(/^\/api\/content\/(\d+)\/(publish|cancel|restore)$/);
+    const itemAction = pathname.match(/^\/api\/content\/(\d+)\/(publish|cancel|restore|delete)$/);
     if (itemAction && method === 'POST') {
       const id = Number(itemAction[1]);
       if (itemAction[2] === 'publish') {
@@ -102,7 +125,14 @@ export function createApp({ env, store, telegram, now = () => new Date() }) {
         const result = await publishItem({ store, telegram, id, destinationChatId: body.destinationChatId, now });
         return json({ ok: true, ...result });
       }
+      if (itemAction[2] === 'delete') {
+        return json({ ok: true, ...(await deleteQueueItem({ store, id })) });
+      }
       return json({ ok: true, ...(await changeQueueState({ store, id, action: itemAction[2], now })) });
+    }
+    const itemDelete = pathname.match(/^\/api\/content\/(\d+)$/);
+    if (itemDelete && method === 'DELETE') {
+      return json({ ok: true, ...(await deleteQueueItem({ store, id: Number(itemDelete[1]) })) });
     }
     const testPost = pathname.match(/^\/api\/chats\/(-?\d+)\/test$/);
     if (testPost && method === 'POST') {
@@ -161,7 +191,7 @@ export function createApp({ env, store, telegram, now = () => new Date() }) {
   }
 
   async function configureWebhook(body) {
-    const secret = env.TELEGRAM_WEBHOOK_SECRET;
+    const secret = (await stableSecret()) ?? env.TELEGRAM_WEBHOOK_SECRET;
     if (!secret || !WEBHOOK_SECRET_PATTERN.test(secret)) return fail(503, 'webhook_secret_invalid_or_missing');
     let target;
     try {
@@ -171,6 +201,7 @@ export function createApp({ env, store, telegram, now = () => new Date() }) {
     }
     if (target.protocol !== 'https:') return fail(400, 'https_required');
     if (target.pathname !== '/telegram/webhook') return fail(400, 'webhook_path_must_be_/telegram/webhook');
+    // Pending updates are kept on purpose: posts Telegram could not deliver are retried with the new secret.
     await telegram().setWebhook({ url: target.toString(), secret_token: secret, allowed_updates: ALLOWED_UPDATES });
     return json({ ok: true, url: target.toString(), allowedUpdates: ALLOWED_UPDATES });
   }
@@ -191,7 +222,7 @@ function corsHeaders(request, env) {
   if (!origin || !env.ALLOWED_ORIGIN || origin !== env.ALLOWED_ORIGIN) return {};
   return {
     'access-control-allow-origin': origin,
-    'access-control-allow-methods': 'GET, POST, OPTIONS',
+    'access-control-allow-methods': 'GET, POST, DELETE, OPTIONS',
     'access-control-allow-headers': 'authorization, content-type',
     'access-control-max-age': '600',
     vary: 'origin',
