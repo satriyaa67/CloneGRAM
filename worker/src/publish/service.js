@@ -1,6 +1,7 @@
 import { TelegramApiError } from '../telegram/client.js';
 
 const ACTIONABLE = new Set(['received', 'failed']);
+const DELETABLE = new Set(['received', 'failed', 'cancelled']);
 
 export class PublishError extends Error {
   constructor(status, code, extra = {}) {
@@ -71,4 +72,22 @@ export async function changeQueueState({ store, id, action, now = () => new Date
   const group = await store.getItemWithGroup(item);
   const changed = await store.transition(group.map((row) => row.id), from, to, now().toISOString());
   return { changed, status: to };
+}
+
+/**
+ * Permanently removes an unpublished item (and its whole album) from the queue.
+ * Only waiting, failed or cancelled rows qualify; if any album sibling is being published,
+ * published or protected, nothing is deleted. The SQL delete repeats the status guard, so a
+ * publish that starts between the check and the delete is never removed.
+ */
+export async function deleteQueueItem({ store, id }) {
+  const item = await store.getContentItem(id);
+  if (!item) throw new PublishError(404, 'item_not_found');
+  if (!DELETABLE.has(item.status)) throw new PublishError(409, 'item_not_deletable', { status: item.status });
+  const group = await store.getItemWithGroup(item);
+  const blocked = group.find((row) => !DELETABLE.has(row.status));
+  if (blocked) throw new PublishError(409, 'item_not_deletable', { status: blocked.status });
+  const deleted = await store.deleteQueued(group.map((row) => row.id));
+  if (deleted === 0) throw new PublishError(409, 'item_not_deletable');
+  return { deleted };
 }
