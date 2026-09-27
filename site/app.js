@@ -60,11 +60,15 @@
     item_not_found: 'Gönderi bulunamadı. Listeyi yenile.',
     item_not_cancellable: 'Bu gönderi iptal edilemez (yayımlanmış ya da korumalı).',
     item_not_restorable: 'Bu gönderi geri alınamaz.',
+    item_not_deletable: 'Bu gönderi silinemez (şu an gönderiliyor, yayımlanmış ya da korumalı).',
+    webhook_secret_invalid_or_missing: 'Sunucuda webhook anahtarı oluşturulamadı. Dağıtımı yeniden çalıştır.',
+    https_required: 'Webhook adresi https olmalı.',
   };
 
   const STATUS_LABEL = { received: 'Bekliyor', in_review: 'İncelemede', scheduled: 'Planlandı', publishing: 'Gönderiliyor', published: 'Yayımlandı', cancelled: 'İptal edildi', skipped: 'Atlandı', failed: 'Gönderilemedi' };
   const STATUS_PILL = { received: '', publishing: '', published: 'ok', cancelled: 'mute', skipped: 'mute', failed: 'warn' };
   const MEDIA_LABEL = { text: 'Metin', photo: 'Fotoğraf', video: 'Video', animation: 'GIF', document: 'Dosya', audio: 'Ses', voice: 'Sesli mesaj', video_note: 'Görüntülü not', sticker: 'Çıkartma' };
+  const DELETABLE = new Set(['received', 'failed', 'cancelled']);
 
   const state = { mode: null, token: null, entered: false, page: 'overview', filter: 'all', data: {}, timer: null, apiReachable: false };
   const root = document.getElementById('root');
@@ -122,7 +126,8 @@
     return new Date(iso).toLocaleString('tr-TR', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
   }
   const RECENT_ERROR_MS = 15 * 60 * 1000;
-  const recentError = (webhook) => !!(webhook?.lastError && webhook.lastErrorAt && Date.now() - new Date(webhook.lastErrorAt).getTime() < RECENT_ERROR_MS);
+  // Telegram keeps the last error date even after deliveries recover; an error only matters while updates are piling up.
+  const recentError = (webhook) => !!(webhook?.lastError && webhook.lastErrorAt && (webhook.pendingUpdates ?? 0) > 0 && Date.now() - new Date(webhook.lastErrorAt).getTime() < RECENT_ERROR_MS);
   const chatLabel = (title, username) => (username ? `${title} · @${username}` : title);
   const truncate = (text, n) => (text.length > n ? `${text.slice(0, n - 1)}…` : text);
 
@@ -413,6 +418,9 @@
     } else if (item.status === 'cancelled') {
       box.append(h('button', { class: 'btn ghost sm', type: 'button', onclick: (e) => queueState(item, 'restore', holder, e.currentTarget) }, 'Geri al'));
     }
+    if (DELETABLE.has(item.status)) {
+      box.append(h('button', { class: 'btn ghost sm', type: 'button', onclick: () => confirmDelete(item, holder) }, 'Sil'));
+    }
     return box.childNodes.length ? box : null;
   }
 
@@ -459,6 +467,51 @@
     }
   }
 
+  /** Inline confirmation before a permanent delete (whole album if the row is one). */
+  function confirmDelete(item, holder) {
+    const many = item.count > 1;
+    const go = h('button', { class: 'btn primary sm', type: 'button', onclick: (e) => deleteItem(item, holder, e.currentTarget) }, many ? `Evet, ${item.count} öğeyi sil` : 'Evet, sil');
+    holder.replaceChildren(h('div', { class: 'chooser', role: 'alert' },
+      h('span', {}, many
+        ? `Bu albümdeki ${item.count} öğe kuyruktan kalıcı olarak silinecek. Bu işlem geri alınamaz.`
+        : 'Bu gönderi kuyruktan kalıcı olarak silinecek. Bu işlem geri alınamaz.'),
+      go,
+      h('button', { class: 'btn ghost sm', type: 'button', onclick: () => holder.replaceChildren() }, 'Vazgeç')));
+    go.focus();
+  }
+
+  async function deleteItem(item, holder, button) {
+    if (state.mode === 'demo') { toast('Örnek veri modunda değişiklik yapılmaz.'); holder.replaceChildren(); return; }
+    button.disabled = true;
+    try {
+      const res = await api(`/api/content/${item.id}/delete`, { method: 'POST' });
+      toast(res.deleted > 1 ? `${res.deleted} öğe kuyruktan silindi.` : 'Gönderi kuyruktan silindi.');
+      refresh(false, true);
+    } catch (error) {
+      button.disabled = false;
+      holder.replaceChildren(h('ul', { class: 'reasons', role: 'alert' }, h('li', {}, errorText(error))));
+      refresh(false, true);
+    }
+  }
+
+  /** Re-registers the Telegram webhook for this exact panel address (self-service fix for delivery errors). */
+  async function repairWebhook(button) {
+    if (state.mode === 'demo') { toast('Örnek veri modunda değişiklik yapılmaz.'); return; }
+    const label = button.textContent;
+    button.disabled = true;
+    button.textContent = 'Onarılıyor…';
+    try {
+      await api('/api/telegram/webhook', { method: 'POST', body: { url: `${location.origin}/telegram/webhook` } });
+      toast('Telegram bağlantısı yenilendi. Bekleyen gönderiler birkaç saniye içinde kuyruğa düşer.');
+      setTimeout(() => refresh(false, true), 4000);
+    } catch (error) {
+      toast(errorText(error));
+    } finally {
+      button.disabled = false;
+      button.textContent = label;
+    }
+  }
+
   function itemRow(item, actions) {
     const skipped = item.status === 'skipped';
     const kindName = skipped ? 'lock' : item.media_type === 'text' ? 'text' : item.media_type === 'photo' ? 'photo' : ['video', 'animation', 'video_note'].includes(item.media_type) ? 'video' : 'file';
@@ -484,9 +537,10 @@
   function setupSteps(status, summary, hasItems) {
     const botOk = status && !status.error && !!status.bot?.username;
     const hookOk = botOk && status.webhook?.active;
+    const hookTrouble = botOk && (!hookOk || recentError(status.webhook));
     const steps = [
       [botOk, 'Bot bağlı', botOk ? `@${status.bot.username} olarak çalışıyor.` : 'Bot bilgisi alınamadı. Dağıtımdaki TELEGRAM_BOT_TOKEN değerini kontrol et.'],
-      [hookOk, 'Telegram bildirimleri açık', hookOk ? (recentError(status.webhook) ? `Son hata (${relTime(status.webhook.lastErrorAt)}): ${status.webhook.lastError}` : 'Yeni gönderiler anında buraya düşer.') : 'Webhook kayıtlı değil. Dağıtım iş akışını yeniden çalıştır.'],
+      [hookOk, 'Telegram bildirimleri açık', hookOk ? (recentError(status.webhook) ? `Son hata (${relTime(status.webhook.lastErrorAt)}): ${status.webhook.lastError}. "Bağlantıyı onar"a bas.` : 'Yeni gönderiler anında buraya düşer.') : 'Webhook kayıtlı değil. "Bağlantıyı onar"a bas.'],
       [(summary.chats.source || 0) > 0, 'Kaynak kanal ekli', 'Botu kaynak kanala ekle, sonra Bağlantılar\'dan kaynak olarak kaydet.'],
       [(summary.chats.destination || 0) > 0, 'Hedef kanal ekli', 'Botu hedef kanala mesaj gönderme yetkili yönetici olarak ekle ve kaydet.'],
       [hasItems, 'İlk içerik geldi', 'Kaynak kanalda yeni bir gönderi paylaş; birkaç saniye içinde kuyrukta görünür. Sonra kuyrukta "Hedefe gönder"e bas.'],
@@ -497,6 +551,7 @@
       h('ol', { class: 'steps' }, steps.map(([ok, title, detail], i) =>
         h('li', {}, h('span', { class: `mark ${ok ? 'done' : ''}` }, ok ? icon('check') : String(i + 1)),
           h('div', {}, h('b', {}, title), !ok || i < 2 ? h('p', {}, detail) : null),
+          i === 1 && hookTrouble ? h('button', { class: 'btn primary', type: 'button', onclick: (e) => repairWebhook(e.currentTarget) }, 'Bağlantıyı onar') : null,
           i >= 2 && !ok ? h('button', { class: 'btn ghost', type: 'button', onclick: () => navigate(i === 4 ? 'queue' : 'connections') }, i === 4 ? 'Kuyruğa git' : 'Bağlantılar') : null))));
   }
 
@@ -527,7 +582,7 @@
       const filters = [['all', 'Tümü', Object.values(c).reduce((a, b) => a + b, 0)], ['received', 'Bekleyen', c.received || 0], ['published', 'Yayımlanan', c.published || 0], ['cancelled', 'İptal', c.cancelled || 0], ['skipped', 'Atlanan', c.skipped || 0]];
       if (c.failed) filters.splice(2, 0, ['failed', 'Gönderilemedi', c.failed]);
       return [
-        pageHead('YAYIN STÜDYOSU', 'İçerik kuyruğu', 'Hazır olanı "Hedefe gönder" ile yayımla, istemediğini iptal et. Metin düzenleme ve filigran Faz 2\'de burada olacak.'),
+        pageHead('YAYIN STÜDYOSU', 'İçerik kuyruğu', 'Hazır olanı "Hedefe gönder" ile yayımla, istemediğini iptal et ya da kalıcı olarak sil. Metin düzenleme ve filigran Faz 2\'de burada olacak.'),
         demoNote(),
         h('div', { class: 'filters', role: 'group', 'aria-label': 'Duruma göre filtrele' }, filters.map(([id, label, n]) =>
           h('button', { class: 'chip', type: 'button', 'aria-pressed': String(state.filter === id), onclick: () => { state.filter = id; refresh(false); } }, `${label} · ${n}`))),
@@ -587,7 +642,8 @@
             row('Grup mesajlarını okuma', s ? (s.bot.canReadAllGroupMessages ? 'Açık (gizlilik modu kapalı)' : 'Kapalı: gruplarda bot yönetici olmalı') : '—'),
             row('Webhook', s ? h('span', { class: `pill ${s.webhook.active ? 'ok' : 'warn'}` }, s.webhook.active ? 'Aktif' : 'Kayıtlı değil') : '—'),
             row('Bekleyen güncelleme', s ? h('span', { class: 'num' }, String(s.webhook.pendingUpdates)) : '—'),
-            row('Son webhook hatası', s ? (s.webhook.lastError ? `${s.webhook.lastError} (${relTime(s.webhook.lastErrorAt)})` : 'Yok') : '—'))),
+            row('Son webhook hatası', s ? (s.webhook.lastError ? `${s.webhook.lastError} (${relTime(s.webhook.lastErrorAt)})` : 'Yok') : '—'),
+            s ? row('Bağlantı', h('button', { class: 'btn sm', type: 'button', onclick: (e) => repairWebhook(e.currentTarget) }, 'Bağlantıyı onar')) : null)),
         h('section', {}, h('div', { class: 'sec-head' }, h('h2', {}, 'Görünüm')), themeControl()),
         h('section', {}, h('div', { class: 'sec-head' }, h('h2', {}, 'Oturum')),
           h('dl', { class: 'kv' }, row('Mod', state.mode === 'demo' ? 'Örnek veri' : 'Canlı'), row('Anahtar', 'Yalnızca bu tarayıcı sekmesinde tutulur'))),
