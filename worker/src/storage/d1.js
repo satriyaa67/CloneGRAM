@@ -6,6 +6,7 @@ const ITEM_FROM = `FROM content_items i
   LEFT JOIN chats c ON c.id = i.source_id
   LEFT JOIN chats d ON d.workspace_id = i.workspace_id AND d.telegram_chat_id = i.published_chat_id AND d.role = 'destination'`;
 const ACTIONABLE = "('received', 'failed')";
+const DELETABLE = "('received', 'failed', 'cancelled')";
 const ACTIVE_BOT_STATUSES = "('creator', 'administrator', 'member', 'restricted')";
 const STATUSES = new Set(['received', 'in_review', 'scheduled', 'publishing', 'published', 'cancelled', 'skipped', 'failed']);
 
@@ -169,6 +170,17 @@ export function createD1Store(db) {
       const result = await db
         .prepare(`UPDATE content_items SET status = ?, updated_at = ? WHERE workspace_id = ? AND id IN (${marks}) AND status IN (${fromMarks})`)
         .bind(to, at, workspaceId, ...ids, ...from)
+        .run();
+      return result?.meta?.changes ?? 0;
+    },
+
+    /** Deletes only rows that are still waiting, failed or cancelled; returns how many were removed. */
+    async deleteQueued(ids, workspaceId = 'default') {
+      if (ids.length === 0) return 0;
+      const marks = ids.map(() => '?').join(', ');
+      const result = await db
+        .prepare(`DELETE FROM content_items WHERE workspace_id = ? AND id IN (${marks}) AND status IN ${DELETABLE}`)
+        .bind(workspaceId, ...ids)
         .run();
       return result?.meta?.changes ?? 0;
     },
